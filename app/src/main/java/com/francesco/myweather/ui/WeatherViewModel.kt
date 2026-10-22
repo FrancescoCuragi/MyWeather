@@ -1,7 +1,9 @@
 package com.francesco.myweather.ui
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.francesco.myweather.data.CachedForecast
 import com.francesco.myweather.data.ForecastResponse
 import com.francesco.myweather.data.WeatherRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,13 +13,22 @@ import kotlinx.coroutines.launch
 
 sealed interface WeatherUiState {
     data object Loading : WeatherUiState
-    data class Success(val placeName: String, val forecast: ForecastResponse) : WeatherUiState
+
+    data class Success(
+        val placeName: String,
+        val forecast: ForecastResponse,
+        val updatedAt: Long,
+        val isRefreshing: Boolean = false,
+        /** True when the last refresh failed and the saved forecast is shown instead. */
+        val isOffline: Boolean = false,
+    ) : WeatherUiState
+
     data class Error(val message: String) : WeatherUiState
 }
 
-class WeatherViewModel(
-    private val repository: WeatherRepository = WeatherRepository(),
-) : ViewModel() {
+class WeatherViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val repository = WeatherRepository(application.cacheDir)
 
     private val _state = MutableStateFlow<WeatherUiState>(WeatherUiState.Loading)
     val state: StateFlow<WeatherUiState> = _state.asStateFlow()
@@ -26,14 +37,24 @@ class WeatherViewModel(
         refresh()
     }
 
+    /** Shows the saved forecast straight away (if any), then replaces it with a fresh one. */
     fun refresh() {
         viewModelScope.launch {
-            _state.value = WeatherUiState.Loading
-            repository.forecast(BRUSSELS_LAT, BRUSSELS_LON)
-                .onSuccess { _state.value = WeatherUiState.Success("Brussels", it) }
-                .onFailure { _state.value = WeatherUiState.Error(it.message ?: "Could not load forecast") }
+            val shown = (_state.value as? WeatherUiState.Success)
+                ?: repository.loadCached(BRUSSELS_LAT, BRUSSELS_LON)?.toUiState()
+            _state.value = shown?.copy(isRefreshing = true) ?: WeatherUiState.Loading
+
+            repository.fetch(BRUSSELS_LAT, BRUSSELS_LON)
+                .onSuccess { _state.value = it.toUiState() }
+                .onFailure {
+                    _state.value = shown?.copy(isRefreshing = false, isOffline = true)
+                        ?: WeatherUiState.Error(it.message ?: "Could not load forecast")
+                }
         }
     }
+
+    private fun CachedForecast.toUiState() =
+        WeatherUiState.Success("Brussels", forecast, fetchedAt)
 
     private companion object {
         // Placeholder until saved locations / GPS arrive in Phase 2.

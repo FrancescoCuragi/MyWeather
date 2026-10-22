@@ -1,0 +1,19 @@
+package com.francesco.myweather.ui
+
+import android.os.Build
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+
+/** The app is dark-only: Material You colours where available, a plain dark scheme otherwise. */
+@Composable
+fun MyWeatherTheme(content: @Composable () -> Unit) {
+    val colorScheme = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        dynamicDarkColorScheme(LocalContext.current)
+    } else {
+        darkColorScheme()
+    }
+    MaterialTheme(colorScheme = colorScheme, content = content)
+}

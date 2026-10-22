@@ -15,22 +15,27 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.francesco.myweather.data.ForecastResponse
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
-fun HomeScreen(state: WeatherUiState, onRetry: () -> Unit) {
+fun HomeScreen(state: WeatherUiState, onRefresh: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         when (state) {
             WeatherUiState.Loading -> CircularProgressIndicator()
@@ -40,25 +45,43 @@ fun HomeScreen(state: WeatherUiState, onRetry: () -> Unit) {
                 modifier = Modifier.padding(24.dp),
             ) {
                 Text(state.message, textAlign = TextAlign.Center)
-                Button(onClick = onRetry) { Text("Retry") }
+                Button(onClick = onRefresh) { Text("Retry") }
             }
-            is WeatherUiState.Success -> ForecastContent(state.placeName, state.forecast)
+            is WeatherUiState.Success -> ForecastContent(state, onRefresh)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ForecastContent(state: WeatherUiState.Success, onRefresh: () -> Unit) {
+    val forecast = state.forecast
+    PullToRefreshBox(isRefreshing = state.isRefreshing, onRefresh = onRefresh) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item { HeroCard(state.placeName, forecast) }
+            item { UpdatedCaption(state) }
+            item { HourlyStrip(forecast) }
+            item { Text("Next 14 days", style = MaterialTheme.typography.titleMedium) }
+            items(forecast.daily.time.indices.toList()) { i -> DailyRow(forecast, i) }
         }
     }
 }
 
 @Composable
-private fun ForecastContent(placeName: String, forecast: ForecastResponse) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item { HeroCard(placeName, forecast) }
-        item { HourlyStrip(forecast) }
-        item { Text("Next 14 days", style = MaterialTheme.typography.titleMedium) }
-        items(forecast.daily.time.indices.toList()) { i -> DailyRow(forecast, i) }
-    }
+private fun UpdatedCaption(state: WeatherUiState.Success) {
+    val time = Instant.ofEpochMilli(state.updatedAt).atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("HH:mm"))
+    Text(
+        if (state.isOffline) "Offline · showing data from $time" else "Updated $time",
+        style = MaterialTheme.typography.labelMedium,
+        color = if (state.isOffline) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+        textAlign = TextAlign.Center,
+    )
 }
 
 @Composable
