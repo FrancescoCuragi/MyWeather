@@ -14,12 +14,14 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 data class CachedForecast(
     val fetchedAt: Long,
     val forecast: ForecastResponse,
+    val airQuality: AirQuality? = null,
 )
 
 /** Fetches forecasts from Open-Meteo and keeps the latest one per location in a JSON file. */
 class WeatherRepository(
     private val cacheDir: File,
-    private val api: OpenMeteoApi = createApi(),
+    private val api: OpenMeteoApi = createRetrofit(OpenMeteoApi.BASE_URL).create(OpenMeteoApi::class.java),
+    private val airApi: AirQualityApi = createRetrofit(AirQualityApi.BASE_URL).create(AirQualityApi::class.java),
 ) {
     suspend fun loadCached(latitude: Double, longitude: Double): CachedForecast? =
         withContext(Dispatchers.IO) {
@@ -30,7 +32,9 @@ class WeatherRepository(
 
     suspend fun fetch(latitude: Double, longitude: Double): Result<CachedForecast> =
         runCatching {
-            val fresh = CachedForecast(System.currentTimeMillis(), api.forecast(latitude, longitude))
+            // Air quality is a bonus: a failure there must not fail the whole refresh.
+            val air = runCatching { airApi.airQuality(latitude, longitude).current }.getOrNull()
+            val fresh = CachedForecast(System.currentTimeMillis(), api.forecast(latitude, longitude), air)
             withContext(Dispatchers.IO) {
                 cacheFile(latitude, longitude).writeText(json.encodeToString(fresh))
             }
@@ -43,11 +47,10 @@ class WeatherRepository(
     private companion object {
         val json = Json { ignoreUnknownKeys = true }
 
-        fun createApi(): OpenMeteoApi =
+        fun createRetrofit(baseUrl: String): Retrofit =
             Retrofit.Builder()
-                .baseUrl(OpenMeteoApi.BASE_URL)
+                .baseUrl(baseUrl)
                 .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
                 .build()
-                .create(OpenMeteoApi::class.java)
     }
 }

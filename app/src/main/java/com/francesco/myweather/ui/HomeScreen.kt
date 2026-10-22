@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -65,6 +66,7 @@ private fun ForecastContent(state: WeatherUiState.Success, onRefresh: () -> Unit
             item { HeroCard(state.placeName, forecast) }
             item { UpdatedCaption(state) }
             item { HourlyStrip(forecast) }
+            item { DetailsGrid(state) }
             item { Text("Next 14 days", style = MaterialTheme.typography.titleMedium) }
             items(forecast.daily.time.indices.toList()) { i -> DailyRow(forecast, i) }
         }
@@ -136,6 +138,69 @@ private fun HourlyStrip(forecast: ForecastResponse) {
                     }
                 }
             }
+        }
+    }
+}
+
+private data class Detail(val title: String, val value: String, val note: String? = null)
+
+private fun uvNote(uv: Double) = when {
+    uv < 3 -> "Low"
+    uv < 6 -> "Moderate"
+    uv < 8 -> "High"
+    uv < 11 -> "Very high"
+    else -> "Extreme"
+}
+
+private fun aqiNote(aqi: Int) = when {
+    aqi <= 50 -> "Good"
+    aqi <= 100 -> "Moderate"
+    aqi <= 150 -> "Unhealthy for sensitive groups"
+    aqi <= 200 -> "Unhealthy"
+    aqi <= 300 -> "Very unhealthy"
+    else -> "Hazardous"
+}
+
+private fun clockTime(isoDateTime: String) =
+    LocalDateTime.parse(isoDateTime).format(DateTimeFormatter.ofPattern("HH:mm"))
+
+private fun detailsOf(state: WeatherUiState.Success): List<Detail> {
+    val c = state.forecast.current
+    val d = state.forecast.daily
+    val moon = moonPhase(LocalDate.parse(d.time[0]))
+    return listOfNotNull(
+        c.uvIndex?.let { Detail("UV index", "%.0f".format(Locale.ROOT, it), uvNote(it)) },
+        state.airQuality?.aqi?.let { Detail("Air quality", "$it", aqiNote(it)) },
+        Detail("Humidity", "${c.humidity}%"),
+        c.pressure?.let { Detail("Pressure", "${it.roundToInt()} hPa") },
+        c.visibility?.let { Detail("Visibility", "%.1f km".format(Locale.ROOT, it / 1000)) },
+        c.dewPoint?.let { Detail("Dew point", "${it.roundToInt()}°") },
+        Detail("Sunrise", clockTime(d.sunrise[0])),
+        Detail("Sunset", clockTime(d.sunset[0])),
+        Detail("Moon", moon.icon, moon.name),
+    )
+}
+
+@Composable
+private fun DetailsGrid(state: WeatherUiState.Success) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Details", style = MaterialTheme.typography.titleMedium)
+        detailsOf(state).chunked(2).forEach { pair ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                pair.forEach { DetailCard(it, Modifier.weight(1f)) }
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailCard(detail: Detail, modifier: Modifier = Modifier) {
+    Card(modifier) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Text(detail.title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(detail.value, style = MaterialTheme.typography.headlineSmall)
+            Text(detail.note ?: " ", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

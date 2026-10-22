@@ -3,6 +3,7 @@ package com.francesco.myweather.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.francesco.myweather.data.AirQuality
 import com.francesco.myweather.data.CachedForecast
 import com.francesco.myweather.data.ForecastResponse
 import com.francesco.myweather.data.WeatherRepository
@@ -18,6 +19,7 @@ sealed interface WeatherUiState {
         val placeName: String,
         val forecast: ForecastResponse,
         val updatedAt: Long,
+        val airQuality: AirQuality? = null,
         val isRefreshing: Boolean = false,
         /** True when the last refresh failed and the saved forecast is shown instead. */
         val isOffline: Boolean = false,
@@ -54,7 +56,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun CachedForecast.toUiState() =
-        WeatherUiState.Success("Brussels", forecast, fetchedAt)
+        WeatherUiState.Success("Brussels", forecast, fetchedAt, airQuality)
 
     private companion object {
         // Placeholder until saved locations / GPS arrive in Phase 2.
