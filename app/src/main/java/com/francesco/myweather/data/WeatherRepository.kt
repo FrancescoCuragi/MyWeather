@@ -22,7 +22,11 @@ class WeatherRepository(
     private val cacheDir: File,
     private val api: OpenMeteoApi = createRetrofit(OpenMeteoApi.BASE_URL).create(OpenMeteoApi::class.java),
     private val airApi: AirQualityApi = createRetrofit(AirQualityApi.BASE_URL).create(AirQualityApi::class.java),
+    private val geocodingApi: GeocodingApi = createRetrofit(GeocodingApi.BASE_URL).create(GeocodingApi::class.java),
 ) {
+    suspend fun searchPlaces(query: String): Result<List<GeoResult>> =
+        runCatching { geocodingApi.search(query).results }
+
     suspend fun loadCached(latitude: Double, longitude: Double): CachedForecast? =
         withContext(Dispatchers.IO) {
             runCatching {
