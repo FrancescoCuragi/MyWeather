@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <link rel="stylesheet" href="maplibre-gl.css">
+  <style>
+    html, body { margin: 0; background: #0f1420; }
+    /* Fixed positioning, so layout never depends on the page having a resolved height. */
+    #map { position: fixed; top: 0; right: 0; bottom: 0; left: 0; }
+    #controls {
+      position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 2;
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px; border-radius: 28px;
+      background: rgba(30, 34, 48, 0.88); color: #e6e8f0;
+      font: 14px/1.2 sans-serif;
+    }
+    #play {
+      width: 40px; height: 40px; border-radius: 20px; border: 0; flex: none;
+      background: #4a4f7a; color: #fff; font-size: 16px;
+    }
+    #slider { flex: 1; min-width: 0; }
+    #time { flex: none; min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
+    #status { position: fixed; z-index: 2; top: 12px; left: 12px; right: 12px; text-align: center; color: #e6e8f0; font: 13px sans-serif; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="status"></div>
+  <div id="controls" hidden>
+    <button id="play" aria-label="Play or pause">⏸</button>
+    <input id="slider" type="range" min="0" max="0" value="0">
+    <span id="time"></span>
+  </div>
+
+  <script src="maplibre-gl.js"></script>
+  <script>
+    // Kotlin side (see MapScreen.kt) exposes `Android.onMapTap(lat, lon)`; absent when opened in a desktop browser.
+    var RAINVIEWER_API = 'https://api.rainviewer.com/public/weather-maps.json';
+    var RADAR_MAX_ZOOM = 7;       // RainViewer free tiles stop at zoom 7; MapLibre over-scales beyond it
+    var FRAME_MS = 600;
+    var RADAR_OPACITY = 0.7;
+
+    var map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://tiles.openfreemap.org/styles/dark',
+      center: [4.35, 50.85],
+      zoom: 5,
+      attributionControl: false
+    });
+    // Top-right so the attribution never sits under the radar controls.
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'top-right');
+
+    var marker = null;
+    var frames = [];     // [{time, layerId}]
+    var current = 0;
+    var playing = true;
+    var timer = null;
+
+    var playBtn = document.getElementById('play');
+    var slider = document.getElementById('slider');
+    var timeLabel = document.getElementById('time');
+    var statusLabel = document.getElementById('status');
+
+    function setStatus(text) { statusLabel.textContent = text || ''; }
+
+    function showFrame(index) {
+      if (!frames.length) return;
+      current = (index + frames.length) % frames.length;
+      frames.forEach(function (f, i) {
+        map.setPaintProperty(f.layerId, 'raster-opacity', i === current ? RADAR_OPACITY : 0);
+      });
+      slider.value = current;
+      timeLabel.textContent = new Date(frames[current].time * 1000)
+        .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function tick() {
+      // Pause briefly on the newest frame so the loop reads as "now".
+      var next = current + 1;
+      showFrame(next);
+      timer = setTimeout(tick, next === frames.length - 1 ? FRAME_MS * 3 : FRAME_MS);
+    }
+
+    function setPlaying(value) {
+      playing = value;
+      playBtn.textContent = playing ? '⏸' : '▶';
+      clearTimeout(timer);
+      if (playing && frames.length) timer = setTimeout(tick, FRAME_MS);
+    }
+
+    function loadRadar() {
+      setStatus('Loading radar…');
+      fetch(RAINVIEWER_API)
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var past = (data.radar && data.radar.past) || [];
+          past.forEach(function (frame, i) {
+            var id = 'radar-' + i;
+            map.addSource(id, {
+              type: 'raster',
+              tiles: [data.host + frame.path + '/256/{z}/{x}/{y}/2/1_1.png'],
+              tileSize: 256,
+              maxzoom: RADAR_MAX_ZOOM,
+              attribution: '<a href="https://www.rainviewer.com/">RainViewer</a>'
+            });
+            map.addLayer({
+              id: id, type: 'raster', source: id,
+              paint: { 'raster-opacity': 0, 'raster-fade-duration': 0 }
+            });
+            frames.push({ time: frame.time, layerId: id });
+          });
+          if (!frames.length) { setStatus('No radar data available'); return; }
+          setStatus('');
+          slider.max = frames.length - 1;
+          document.getElementById('controls').hidden = false;
+          showFrame(frames.length - 1);
+          setPlaying(true);
+        })
+        .catch(function () { setStatus('Could not load radar'); });
+    }
+
+    playBtn.addEventListener('click', function () { setPlaying(!playing); });
+    slider.addEventListener('input', function () { setPlaying(false); showFrame(Number(slider.value)); });
+
+    map.on('load', function () {
+      // Start with the attribution collapsed to its (i) button; it expands when tapped.
+      var attrib = document.querySelector('.maplibregl-ctrl-attrib');
+      if (attrib) { attrib.classList.remove('maplibregl-compact-show'); attrib.removeAttribute('open'); }
+      loadRadar();
+    });
+
+    map.on('click', function (e) {
+      if (marker) marker.remove();
+      marker = new maplibregl.Marker({ color: '#9fa8ff' }).setLngLat(e.lngLat).addTo(map);
+      if (window.Android) window.Android.onMapTap(e.lngLat.lat, e.lngLat.lng);
+    });
+
+    // Called from Kotlin via evaluateJavascript.
+    window.setCenter = function (lat, lon, zoom) {
+      map.jumpTo({ center: [lon, lat], zoom: zoom });
+    };
+  </script>
+</body>
+</html>

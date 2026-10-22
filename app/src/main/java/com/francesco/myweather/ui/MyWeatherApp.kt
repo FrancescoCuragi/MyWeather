@@ -19,6 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 private enum class Tab(val label: String, val icon: String) {
     Forecast("Forecast", "🌤️"),
+    Map("Map", "🗺️"),
     Places("Places", "📍"),
     Settings("Settings", "⚙️"),
 }
@@ -63,6 +64,7 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
                     onFocusHandled = viewModel::focusHandled,
                     onRefresh = viewModel::refresh,
                 )
+                Tab.Map -> MapScreen(center = places.firstOrNull())
                 Tab.Places -> LocationsScreen(
                     gpsPlace = places.firstOrNull { it.isCurrentLocation },
                     saved = saved,
