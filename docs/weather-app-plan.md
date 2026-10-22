@@ -75,7 +75,7 @@
 - [ ] **Meteogram** chart (temp, precip, wind, pressure over time)
 
 ### v3 — Nice-to-haves
-- [ ] Home-screen **widgets** (Glance)
+- [ ] Home-screen **widgets** (Glance) — **big widget wanted; build right after the MVP** (small/medium optional)
 - [ ] **Notifications**: rain starting soon, severe-weather warnings (MeteoAlarm), daily morning summary
 - [ ] Wind/sounding/altitude views (pressure-level winds, temperature by altitude)
 - [ ] Favourite-spot "activity scores" (e.g. good for cycling / running)
@@ -212,7 +212,7 @@ No free source hands out a ready-made, global, open-licence turbulence map, so t
 | 6. Clouds & precipitation | Cloud layers, satellite (NASA GIBS), rain/snow + accumulation | 1–2 weeks |
 | 7. Waves & turbulence | GFS-Wave layers; Ellrod CAT index at FL300/340/390 + jet stream | 2 weeks |
 | 8. Models & meteogram | ECMWF/ICON in pipeline, model switcher, comparison, charts | 2 weeks |
-| 9. Widgets & alerts | Glance widget, WorkManager notifications, warnings | 2 weeks |
+| 9. Widgets & alerts | **Big Glance widget (moved up: right after MVP)**, WorkManager notifications, warnings | 2 weeks |
 
 \*Evenings/weekends pace for a beginner working with Claude writing most of the code. Each phase ends with a working app — you can stop at any point and still have something usable.
 
