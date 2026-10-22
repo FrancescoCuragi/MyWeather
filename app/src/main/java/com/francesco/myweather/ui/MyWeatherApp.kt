@@ -8,6 +8,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -19,6 +20,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 private enum class Tab(val label: String, val icon: String) {
     Forecast("Forecast", "🌤️"),
     Places("Places", "📍"),
+    Settings("Settings", "⚙️"),
 }
 
 @Composable
@@ -30,12 +32,14 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
     val saved by viewModel.savedPlaces.collectAsStateWithLifecycle()
     val search by viewModel.search.collectAsStateWithLifecycle()
     val focusKey by viewModel.focusKey.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
 
     // Adding a place jumps back to the forecast tab, where the pager scrolls to it.
     LaunchedEffect(focusKey) {
         if (focusKey != null) tab = Tab.Forecast.ordinal
     }
 
+    CompositionLocalProvider(LocalSettings provides settings) {
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -68,7 +72,14 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
                     onRemove = viewModel::removePlace,
                     onMove = viewModel::movePlace,
                 )
+                Tab.Settings -> SettingsScreen(
+                    settings = settings,
+                    onTemperatureUnit = viewModel::setTemperatureUnit,
+                    onWindUnit = viewModel::setWindUnit,
+                    onUse24Hour = viewModel::setUse24Hour,
+                )
             }
         }
+    }
     }
 }

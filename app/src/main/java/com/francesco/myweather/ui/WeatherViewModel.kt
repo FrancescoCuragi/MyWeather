@@ -9,6 +9,10 @@ import com.francesco.myweather.data.ForecastResponse
 import com.francesco.myweather.data.GeoResult
 import com.francesco.myweather.data.LocationProvider
 import com.francesco.myweather.data.Place
+import com.francesco.myweather.data.SettingsRepository
+import com.francesco.myweather.data.TemperatureUnit
+import com.francesco.myweather.data.UserSettings
+import com.francesco.myweather.data.WindUnit
 import com.francesco.myweather.data.WeatherRepository
 import com.francesco.myweather.data.db.AppDatabase
 import com.francesco.myweather.data.db.SavedPlace
@@ -51,6 +55,22 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     private val repository = WeatherRepository(application.cacheDir)
     private val placeDao = AppDatabase.get(application).placeDao()
     private val locationProvider = LocationProvider(application)
+    private val settingsRepository = SettingsRepository(application)
+
+    val settings: StateFlow<UserSettings> =
+        settingsRepository.settings.stateIn(viewModelScope, SharingStarted.Eagerly, UserSettings())
+
+    fun setTemperatureUnit(unit: TemperatureUnit) {
+        viewModelScope.launch { settingsRepository.setTemperatureUnit(unit) }
+    }
+
+    fun setWindUnit(unit: WindUnit) {
+        viewModelScope.launch { settingsRepository.setWindUnit(unit) }
+    }
+
+    fun setUse24Hour(value: Boolean) {
+        viewModelScope.launch { settingsRepository.setUse24Hour(value) }
+    }
 
     val savedPlaces: StateFlow<List<SavedPlace>> =
         placeDao.observeAll().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())

@@ -26,11 +26,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.francesco.myweather.data.ForecastResponse
+import com.francesco.myweather.data.UserSettings
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -75,8 +75,9 @@ private fun ForecastContent(state: WeatherUiState.Success, onRefresh: () -> Unit
 
 @Composable
 private fun UpdatedCaption(state: WeatherUiState.Success) {
-    val time = Instant.ofEpochMilli(state.updatedAt).atZone(ZoneId.systemDefault())
-        .format(DateTimeFormatter.ofPattern("HH:mm"))
+    val time = LocalSettings.current.clock(
+        Instant.ofEpochMilli(state.updatedAt).atZone(ZoneId.systemDefault()).toLocalDateTime(),
+    )
     Text(
         if (state.isOffline) "Offline · showing data from $time" else "Updated $time",
         style = MaterialTheme.typography.labelMedium,
@@ -89,24 +90,26 @@ private fun UpdatedCaption(state: WeatherUiState.Success) {
 @Composable
 private fun HeroCard(placeName: String, forecast: ForecastResponse) {
     val c = forecast.current
+    val settings = LocalSettings.current
     Card(Modifier.fillMaxWidth()) {
         Column(
             Modifier.fillMaxWidth().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(placeName, style = MaterialTheme.typography.titleLarge)
-            Text("${c.temperature.roundToInt()}°", style = MaterialTheme.typography.displayLarge)
+            Text(settings.temperature(c.temperature), style = MaterialTheme.typography.displayLarge)
             Text(
                 "${weatherIcon(c.weatherCode, c.isDay == 1)} ${weatherLabel(c.weatherCode)}",
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                "Feels like ${c.feelsLike.roundToInt()}° · H ${forecast.daily.temperatureMax[0].roundToInt()}° " +
-                    "L ${forecast.daily.temperatureMin[0].roundToInt()}°",
+                "Feels like ${settings.temperature(c.feelsLike)} · " +
+                    "H ${settings.temperature(forecast.daily.temperatureMax[0])} " +
+                    "L ${settings.temperature(forecast.daily.temperatureMin[0])}",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                "Wind ${c.windSpeed.roundToInt()} km/h · Humidity ${c.humidity}%",
+                "Wind ${settings.wind(c.windSpeed)} · Humidity ${c.humidity}%",
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -116,6 +119,7 @@ private fun HeroCard(placeName: String, forecast: ForecastResponse) {
 @Composable
 private fun HourlyStrip(forecast: ForecastResponse) {
     val h = forecast.hourly
+    val settings = LocalSettings.current
     val now = LocalDateTime.parse(forecast.current.time).withMinute(0)
     val start = h.time.indexOfFirst { !LocalDateTime.parse(it).isBefore(now) }.coerceAtLeast(0)
     val hours = (start until minOf(start + 48, h.time.size)).toList()
@@ -129,11 +133,11 @@ private fun HourlyStrip(forecast: ForecastResponse) {
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            "%02d:00".format(LocalDateTime.parse(h.time[i]).hour),
+                            settings.hourLabel(LocalDateTime.parse(h.time[i])),
                             style = MaterialTheme.typography.labelMedium,
                         )
                         Text(weatherIcon(h.weatherCode[i], h.isDay[i] == 1))
-                        Text("${h.temperature[i].roundToInt()}°", style = MaterialTheme.typography.titleMedium)
+                        Text(settings.temperature(h.temperature[i]), style = MaterialTheme.typography.titleMedium)
                         Text("${h.precipitationProbability[i] ?: 0}%", style = MaterialTheme.typography.labelSmall)
                     }
                 }
@@ -161,10 +165,7 @@ private fun aqiNote(aqi: Int) = when {
     else -> "Hazardous"
 }
 
-private fun clockTime(isoDateTime: String) =
-    LocalDateTime.parse(isoDateTime).format(DateTimeFormatter.ofPattern("HH:mm"))
-
-private fun detailsOf(state: WeatherUiState.Success): List<Detail> {
+private fun detailsOf(state: WeatherUiState.Success, settings: UserSettings): List<Detail> {
     val c = state.forecast.current
     val d = state.forecast.daily
     val moon = moonPhase(LocalDate.parse(d.time[0]))
@@ -174,9 +175,9 @@ private fun detailsOf(state: WeatherUiState.Success): List<Detail> {
         Detail("Humidity", "${c.humidity}%"),
         c.pressure?.let { Detail("Pressure", "${it.roundToInt()} hPa") },
         c.visibility?.let { Detail("Visibility", "%.1f km".format(Locale.ROOT, it / 1000)) },
-        c.dewPoint?.let { Detail("Dew point", "${it.roundToInt()}°") },
-        Detail("Sunrise", clockTime(d.sunrise[0])),
-        Detail("Sunset", clockTime(d.sunset[0])),
+        c.dewPoint?.let { Detail("Dew point", settings.temperature(it)) },
+        Detail("Sunrise", settings.clock(LocalDateTime.parse(d.sunrise[0]))),
+        Detail("Sunset", settings.clock(LocalDateTime.parse(d.sunset[0]))),
         Detail("Moon", moon.icon, moon.name),
     )
 }
@@ -185,7 +186,7 @@ private fun detailsOf(state: WeatherUiState.Success): List<Detail> {
 private fun DetailsGrid(state: WeatherUiState.Success) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Details", style = MaterialTheme.typography.titleMedium)
-        detailsOf(state).chunked(2).forEach { pair ->
+        detailsOf(state, LocalSettings.current).chunked(2).forEach { pair ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 pair.forEach { DetailCard(it, Modifier.weight(1f)) }
                 if (pair.size == 1) Spacer(Modifier.weight(1f))
@@ -208,6 +209,7 @@ private fun DetailCard(detail: Detail, modifier: Modifier = Modifier) {
 @Composable
 private fun DailyRow(forecast: ForecastResponse, i: Int) {
     val d = forecast.daily
+    val settings = LocalSettings.current
     val day = if (i == 0) {
         "Today"
     } else {
@@ -220,6 +222,6 @@ private fun DailyRow(forecast: ForecastResponse, i: Int) {
     ) {
         Text(day, Modifier.width(64.dp))
         Text("${weatherIcon(d.weatherCode[i])} ${d.precipitationProbabilityMax[i] ?: 0}%", Modifier.width(88.dp))
-        Text("${d.temperatureMin[i].roundToInt()}° / ${d.temperatureMax[i].roundToInt()}°")
+        Text("${settings.temperature(d.temperatureMin[i])} / ${settings.temperature(d.temperatureMax[i])}")
     }
 }
