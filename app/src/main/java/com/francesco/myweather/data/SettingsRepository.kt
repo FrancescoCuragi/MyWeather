@@ -3,6 +3,7 @@ package com.francesco.myweather.data
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -35,6 +36,20 @@ class SettingsRepository(private val context: Context) {
         )
     }
 
+    /** The place the home-screen widget shows: the first place in the pager. Null until the app has run once. */
+    val primaryPlace: Flow<Place?> = context.dataStore.data.map { prefs ->
+        val name = prefs[PRIMARY_NAME_KEY]
+        val lat = prefs[PRIMARY_LAT_KEY]
+        val lon = prefs[PRIMARY_LON_KEY]
+        if (name != null && lat != null && lon != null) Place(name, null, lat, lon) else null
+    }
+
+    suspend fun setPrimaryPlace(place: Place) = edit {
+        it[PRIMARY_NAME_KEY] = place.name
+        it[PRIMARY_LAT_KEY] = place.latitude
+        it[PRIMARY_LON_KEY] = place.longitude
+    }
+
     suspend fun setTemperatureUnit(unit: TemperatureUnit) = edit { it[TEMPERATURE_KEY] = unit.name }
     suspend fun setWindUnit(unit: WindUnit) = edit { it[WIND_KEY] = unit.name }
     suspend fun setUse24Hour(value: Boolean) = edit { it[USE_24_HOUR_KEY] = value }
@@ -52,5 +67,8 @@ class SettingsRepository(private val context: Context) {
         val TEMPERATURE_KEY = stringPreferencesKey("temperature_unit")
         val WIND_KEY = stringPreferencesKey("wind_unit")
         val USE_24_HOUR_KEY = booleanPreferencesKey("use_24_hour")
+        val PRIMARY_NAME_KEY = stringPreferencesKey("primary_name")
+        val PRIMARY_LAT_KEY = doublePreferencesKey("primary_lat")
+        val PRIMARY_LON_KEY = doublePreferencesKey("primary_lon")
     }
 }

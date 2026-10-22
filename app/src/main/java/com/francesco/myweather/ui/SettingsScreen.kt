@@ -1,5 +1,8 @@
 package com.francesco.myweather.ui
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,15 +10,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.francesco.myweather.data.TemperatureUnit
 import com.francesco.myweather.data.UserSettings
 import com.francesco.myweather.data.WindUnit
+import com.francesco.myweather.widget.WeatherWidgetReceiver
 
 @Composable
 fun SettingsScreen(
@@ -45,11 +51,24 @@ fun SettingsScreen(
             Choice("12-hour", !settings.use24Hour) { onUse24Hour(false) }
         }
 
+        SettingGroup("Home screen") {
+            val context = LocalContext.current
+            Button(onClick = { requestPinWidget(context) }) { Text("Add weather widget") }
+        }
+
         Text(
             "Weather data: Open-Meteo.com (CC BY 4.0). Map data © OpenStreetMap contributors.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/** Asks the launcher to pin the widget; the user confirms in the system prompt. */
+private fun requestPinWidget(context: Context) {
+    val manager = AppWidgetManager.getInstance(context)
+    if (manager.isRequestPinAppWidgetSupported) {
+        manager.requestPinAppWidget(ComponentName(context, WeatherWidgetReceiver::class.java), null, null)
     }
 }
 

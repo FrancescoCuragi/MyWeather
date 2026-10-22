@@ -13,6 +13,8 @@ import com.francesco.myweather.data.SettingsRepository
 import com.francesco.myweather.data.TemperatureUnit
 import com.francesco.myweather.data.UserSettings
 import com.francesco.myweather.data.WindUnit
+import com.francesco.myweather.widget.WeatherWidget
+import androidx.glance.appwidget.updateAll
 import com.francesco.myweather.data.WeatherRepository
 import com.francesco.myweather.data.db.AppDatabase
 import com.francesco.myweather.data.db.SavedPlace
@@ -98,6 +100,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     init {
         viewModelScope.launch {
             places.collect { list ->
+                list.firstOrNull()?.let { settingsRepository.setPrimaryPlace(it) }
                 list.filter { loadedKeys.add(it.key) }.forEach(::load)
             }
         }
@@ -174,7 +177,11 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             setState(place, shown?.copy(isRefreshing = true) ?: WeatherUiState.Loading)
 
             repository.fetch(place.latitude, place.longitude)
-                .onSuccess { setState(place, it.toUiState(place)) }
+                .onSuccess {
+                    setState(place, it.toUiState(place))
+                    // Keep the home-screen widget in step with what the app just fetched.
+                    WeatherWidget().updateAll(getApplication())
+                }
                 .onFailure {
                     setState(
                         place,
