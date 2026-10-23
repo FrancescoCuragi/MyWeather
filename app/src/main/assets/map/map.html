@@ -182,17 +182,17 @@
     /* ---------------- wind ---------------- */
 
     var windSource = {
-      get count() { return wind.meta.steps.length; },
+      get count() { return wind.hourCount(); },
       label: function (i) {
         var d = new Date(wind.timeOf(i));
         return d.toLocaleDateString([], { weekday: 'short' }) + ' ' +
           d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       },
       show: function (i) {
-        wind.prefetch(i + 1); wind.prefetch(i + 2);
+        wind.prefetch(i + 3); wind.prefetch(i + 6);
         return wind.setStep(i);
       },
-      delayMs: function () { return 700; }
+      delayMs: function () { return 400; }
     };
 
     function updateLegend() {

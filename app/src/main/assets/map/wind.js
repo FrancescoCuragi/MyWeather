@@ -56,6 +56,7 @@
     this.hctx = this.heat.getContext('2d');
     this.pctx = this.parts.getContext('2d');
     this.sampleOut = [0, 0];
+    this.sampleTmp = [0, 0];
 
     this.px = []; this.py = []; this.lon = []; this.lat = []; this.age = [];
     this.count = 0;
@@ -94,19 +95,32 @@
     return this.metaPromise;
   };
 
-  /** Valid time (ms since epoch) of forecast step index i. */
-  WindLayer.prototype.timeOf = function (i) {
-    return Date.parse(this.meta.run) + this.meta.steps[i] * 3600000;
+  /*
+   * The timeline moves in whole hours from the first step; textures only exist every 3 hours, so the hours in
+   * between are linear blends of the two surrounding textures.
+   */
+  WindLayer.prototype.hourCount = function () {
+    var steps = this.meta.steps;
+    return steps[steps.length - 1] - steps[0] + 1;
   };
 
-  /** Index of the forecast step closest to the current time. */
+  /** Valid time (ms since epoch) of timeline hour i. */
+  WindLayer.prototype.timeOf = function (i) {
+    return Date.parse(this.meta.run) + (this.meta.steps[0] + i) * 3600000;
+  };
+
+  /** Timeline hour closest to the current time. */
   WindLayer.prototype.nowIndex = function () {
-    var now = Date.now(), best = 0, bestDiff = Infinity;
-    for (var i = 0; i < this.meta.steps.length; i++) {
-      var d = Math.abs(this.timeOf(i) - now);
-      if (d < bestDiff) { bestDiff = d; best = i; }
-    }
-    return best;
+    var hours = Math.round((Date.now() - Date.parse(this.meta.run)) / 3600000) - this.meta.steps[0];
+    return Math.max(0, Math.min(this.hourCount() - 1, hours));
+  };
+
+  /** The two texture indices around timeline hour i, and how far (0..1) i lies from the first to the second. */
+  WindLayer.prototype.bracket = function (i) {
+    var steps = this.meta.steps, hour = steps[0] + i, k = 0;
+    while (k < steps.length - 2 && steps[k + 1] <= hour) k++;
+    var span = steps[k + 1] - steps[k];
+    return { a: k, b: k + 1, t: Math.max(0, Math.min(1, (hour - steps[k]) / span)) };
   };
 
   WindLayer.prototype.loadFrame = function (level, index) {
@@ -134,6 +148,18 @@
     this.cacheOrder.push(key);
     while (this.cacheOrder.length > CACHE_FRAMES) delete this.cache[this.cacheOrder.shift()];
     return promise;
+  };
+
+  /** Wind at (lon, lat) for the current (possibly blended) frame; same contract as sample(). */
+  WindLayer.prototype.sampleWind = function (frame, lon, lat, out) {
+    if (!this.sample(frame.a, lon, lat, out)) return false;
+    if (frame.t > 0) {
+      var other = this.sampleTmp;
+      this.sample(frame.b, lon, lat, other);
+      out[0] += (other[0] - out[0]) * frame.t;
+      out[1] += (other[1] - out[1]) * frame.t;
+    }
+    return true;
   };
 
   /** Bilinear wind sample at (lon, lat) in degrees; writes [u, v] in m/s to out, returns false outside the data. */
@@ -165,17 +191,20 @@
 
   /** Shows forecast step index i once its texture is available. Resolves when drawn. */
   WindLayer.prototype.setStep = function (index) {
-    var self = this, ticket = ++this.requested;
+    var self = this, ticket = ++this.requested, br = this.bracket(index);
     this.step = index;
-    return this.loadFrame(this.level, index).then(function (frame) {
+    return Promise.all([this.loadFrame(this.level, br.a), this.loadFrame(this.level, br.b)]).then(function (pair) {
       if (ticket !== self.requested) return;  // a newer request superseded this one
-      self.frame = frame;
+      self.frame = { a: pair[0], b: pair[1], t: br.t };
       self.drawHeat();
     });
   };
 
+  /** Starts downloading the textures needed for timeline hour i, so playback does not wait on the network. */
   WindLayer.prototype.prefetch = function (index) {
-    if (index >= 0 && index < this.meta.steps.length) this.loadFrame(this.level, index).catch(function () {});
+    if (index < 0 || index >= this.hourCount()) return;
+    var br = this.bracket(index), self = this;
+    [br.a, br.b].forEach(function (k) { self.loadFrame(self.level, k).catch(function () {}); });
   };
 
   WindLayer.prototype.show = function () {
@@ -227,7 +256,7 @@
       for (var x = 0; x < cw; x++) {
         var p = map.unproject([x * CELL + CELL / 2, y * CELL + CELL / 2]);
         var o = (y * cw + x) * 4;
-        if (!this.sample(f, p.lng, p.lat, out)) { px[o + 3] = 0; continue; }
+        if (!this.sampleWind(f, p.lng, p.lat, out)) { px[o + 3] = 0; continue; }
         var speed = Math.sqrt(out[0] * out[0] + out[1] * out[1]);
         var k = Math.min(255, Math.round(speed / colorMax * 255)) * 4;
         px[o] = LUT[k]; px[o + 1] = LUT[k + 1]; px[o + 2] = LUT[k + 2]; px[o + 3] = LUT[k + 3];
@@ -267,7 +296,7 @@
 
     var degPerPx = 360 / (512 * Math.pow(2, map.getZoom()));
     for (var i = 0; i < this.count; i++) {
-      if (++this.age[i] > MAX_AGE || !this.sample(f, this.lon[i], this.lat[i], out)) { this.respawn(i); continue; }
+      if (++this.age[i] > MAX_AGE || !this.sampleWind(f, this.lon[i], this.lat[i], out)) { this.respawn(i); continue; }
       var cos = Math.cos(this.lat[i] * Math.PI / 180);
       this.lon[i] += out[0] * PIXELS_PER_MS * degPerPx;
       this.lat[i] += out[1] * PIXELS_PER_MS * degPerPx * cos;
