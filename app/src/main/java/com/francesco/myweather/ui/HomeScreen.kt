@@ -1,5 +1,7 @@
 package com.francesco.myweather.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -62,6 +68,7 @@ private fun ForecastContent(
     onLoadModels: () -> Unit,
 ) {
     val forecast = state.forecast
+    var openDay by rememberSaveable { mutableIntStateOf(-1) }  // the expanded day in the list, or -1
     PullToRefreshBox(isRefreshing = state.isRefreshing, onRefresh = onRefresh) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -74,7 +81,9 @@ private fun ForecastContent(
             item { MeteogramCard(forecast) }
             item { DetailsGrid(state) }
             item { Text("Next 14 days", style = MaterialTheme.typography.titleMedium) }
-            items(forecast.daily.time.indices.toList()) { i -> DailyRow(forecast, i) }
+            items(forecast.daily.time.indices.toList()) { i ->
+                DailyRow(forecast, i, expanded = openDay == i, onClick = { openDay = if (openDay == i) -1 else i })
+            }
             item { ModelComparisonCard(forecast, models, onLoadModels) }
         }
     }
@@ -214,21 +223,26 @@ private fun DetailCard(detail: Detail, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun DailyRow(forecast: ForecastResponse, i: Int) {
+private fun DailyRow(forecast: ForecastResponse, i: Int, expanded: Boolean, onClick: () -> Unit) {
     val d = forecast.daily
     val settings = LocalSettings.current
+    val date = LocalDate.parse(d.time[i])
     val day = if (i == 0) {
         "Today"
     } else {
-        LocalDate.parse(d.time[i]).dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault())
+        "${date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault())} ${date.dayOfMonth}"
     }
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(day, Modifier.width(64.dp))
-        Text("${weatherIcon(d.weatherCode[i])} ${d.precipitationProbabilityMax[i] ?: 0}%", Modifier.width(88.dp))
-        Text("${settings.temperature(d.temperatureMin[i])} / ${settings.temperature(d.temperatureMax[i])}")
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(day, Modifier.width(72.dp))
+            Text("${weatherIcon(d.weatherCode[i])} ${d.precipitationProbabilityMax[i] ?: 0}%", Modifier.width(88.dp))
+            Text("${settings.temperature(d.temperatureMin[i])} / ${settings.temperature(d.temperatureMax[i])}")
+            Text(if (expanded) "▴" else "▾", Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        AnimatedVisibility(visible = expanded) { DayDetail(forecast, i) }
     }
 }
