@@ -307,7 +307,7 @@
     var FIELD_MODES = {
       wind: [['surface', 'Surface'], ['850mb', '850 hPa'], ['250mb', '250 hPa · jet']],
       clouds: [['clouds-total', 'Total'], ['clouds-low', 'Low'], ['clouds-mid', 'Mid'], ['clouds-high', 'High']],
-      rain: [['precip', 'Rain & snow']],
+      rain: [['precip', 'Rain rate', 'Rate'], ['rainacc-3h', 'Rain total · past 3 hours', '3 h'], ['rainacc-24h', 'Rain total · past 24 hours', '24 h']],
       waves: [['waves-height', 'Wave height'], ['waves-swell', 'Swell'], ['waves-period', 'Wave period']],
       turbulence: [['cat-fl300', 'FL300 · 9.1 km', 'FL300'], ['cat-fl340', 'FL340 · 10.4 km', 'FL340'], ['cat-fl390', 'FL390 · 11.9 km', 'FL390']]
     };
@@ -357,6 +357,7 @@
       surface: 'Surface (10 m)', '850mb': '850 hPa (~1.5 km)', '250mb': '250 hPa (~10 km)',
       'waves-height': 'Wave height', 'waves-swell': 'Main swell height', 'waves-period': 'Wave period',
       'cat-fl300': 'Turbulence at FL300', 'cat-fl340': 'Turbulence at FL340', 'cat-fl390': 'Turbulence at FL390',
+      'rainacc-3h': 'Rain total, past 3 hours', 'rainacc-24h': 'Rain total, past 24 hours',
       'clouds-total': 'Total cloud cover', 'clouds-low': 'Low clouds', 'clouds-mid': 'Mid-level clouds', 'clouds-high': 'High clouds'
     };
 
@@ -398,6 +399,10 @@
           $('readoutArrow').style.transform = 'rotate(' + heading + 'deg)';
           $('readoutDir').textContent = (isSea ? 'from ' + COMPASS[Math.round(cameFrom / 22.5) % 16] + ' · ' : 'Land · ') +
             LEVEL_NAMES[wind.level] + ' · ' + when;
+        } else if (wind.kind === 'rainacc') {
+          var total = v.u * v.u * wind.accMax();  // the texture stores sqrt(mm / max)
+          $('readoutSpeed').textContent = total < 0.1 ? 'No rain' : (total < 10 ? total.toFixed(1) : Math.round(total)) + ' mm';
+          $('readoutDir').textContent = LEVEL_NAMES[wind.level] + ' · ' + when;
         } else if (wind.kind === 'turbulence') {
           var ti = v.u;  // Ellrod index, 1e-7 s^-2
           var grade = ti < 4 ? 'Smooth' : ti < 8 ? 'Light' : ti < 12 ? 'Moderate' : 'Severe';
@@ -432,7 +437,7 @@
     var MENU = [
       { mode: 'wind', icon: '🌬️', title: 'Wind', items: FIELD_MODES.wind },
       { mode: 'clouds', icon: '☁️', title: 'Clouds', items: FIELD_MODES.clouds },
-      { mode: 'rain', icon: '🌧️', title: 'Rain & snow', items: [['precip', 'Forecast, next 5 days']] },
+      { mode: 'rain', icon: '🌧️', title: 'Rain & snow', items: FIELD_MODES.rain },
       { mode: 'waves', icon: '🌊', title: 'Waves', items: FIELD_MODES.waves },
       { mode: 'turbulence', icon: '✈️', title: 'Turbulence', items: FIELD_MODES.turbulence },
       { mode: 'satellite', icon: '🛰️', title: 'Satellite',

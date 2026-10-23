@@ -8,6 +8,7 @@
  *   precip  red = sqrt(rain rate / 50 mm/h) * 255, green = snow fraction * 255
  *   wave    red = height (0..16 m), green/blue = east/north unit vector of the direction the waves travel
  *   period  grayscale, 0..255 = 0..30 s
+ *   rainacc  grayscale, byte = sqrt(mm / maxMm) * 255: rain total over the past 3 or 24 hours
  *   turbulence  grayscale, 0..255 = Ellrod index 0..20 (1e-7 s^-2): ~4 light, ~8 moderate, ~12 severe
  */
 (function () {
@@ -23,6 +24,7 @@
     if (level === 'precip') return { base: 'fields', kind: 'precip' };
     if (level === 'waves-period') return { base: 'fields', kind: 'period' };
     if (level.indexOf('cat-') === 0) return { base: 'fields', kind: 'turbulence' };
+    if (level.indexOf('rainacc-') === 0) return { base: 'fields', kind: 'rainacc' };
     if (level.indexOf('waves-') === 0) return { base: 'fields', kind: 'wave' };
     return { base: 'wind', kind: 'wind' };
   }
@@ -71,6 +73,22 @@
     return lut;
   }
   var RAIN_LUT = buildPrecipLut(RAIN_STOPS), SNOW_LUT = buildPrecipLut(SNOW_STOPS);
+
+  // Rain totals by mm. The texture stores sqrt(mm / max) like the rate layer, so a table is indexed by the byte itself.
+  var ACC_STOPS = [[0.2, 125, 190, 255], [1, 60, 140, 240], [3, 40, 190, 150], [8, 250, 230, 60], [20, 250, 130, 40],
+                   [50, 225, 50, 150], [150, 170, 50, 200]];
+  function buildAccLut(maxMm) {
+    var lut = new Uint8ClampedArray(256 * 4);
+    for (var i = 0; i < 256; i++) {
+      var mm = Math.pow(i / 255, 2) * maxMm, s = 1;
+      while (s < ACC_STOPS.length - 1 && ACC_STOPS[s][0] < mm) s++;
+      var a = ACC_STOPS[s - 1], b = ACC_STOPS[s], t = Math.max(0, Math.min(1, (mm - a[0]) / (b[0] - a[0])));
+      for (var c = 0; c < 3; c++) lut[i * 4 + c] = a[c + 1] + (b[c + 1] - a[c + 1]) * t;
+      lut[i * 4 + 3] = 140 * Math.sqrt(Math.max(0, Math.min(1, (mm - 0.1) / 2)));  // soft edge, nothing below ~0.1 mm; see-through so the map stays readable
+    }
+    return lut;
+  }
+  var ACC_LUTS = {};  // by maxMm, built when a layer first needs it
 
   var MAX_WAVE_M = 16, MAX_PERIOD_S = 30, MAX_TURBULENCE = 20;
   var WAVE_STOPS = [[0, 25, 40, 120], [1, 45, 90, 200], [2, 60, 150, 230], [3.5, 100, 185, 235], [5, 160, 210, 245],
@@ -242,6 +260,8 @@
       scale = [spec.maxPeriod / 255, 0, 0]; offset = [0, 0, 0];
     } else if (info.kind === 'turbulence') {
       scale = [spec.maxIndex / 255, 0, 0]; offset = [0, 0, 0];
+    } else if (info.kind === 'rainacc') {
+      scale = [1 / 255, 0, 0]; offset = [0, 0, 0];  // the square of this times maxMm is the total in mm
     } else {
       scale = [1 / 255, 1 / 255, 1 / 255]; offset = [0, 0, 0];
     }
@@ -284,6 +304,9 @@
    * {u, v} in m/s for wind; {u: cloud 0..1} for clouds; {u: rain rate 0..1 (sqrt-encoded), v: snow fraction};
    * {u: height m, v: east, w: north} for waves; {u: seconds} for the wave period.
    */
+  /** The mm at the top of the current rain-total layer's range. */
+  WindLayer.prototype.accMax = function () { return this.meta.levels[this.level].maxMm; };
+
   WindLayer.prototype.windAt = function (lon, lat) {
     var out = [0, 0, 0];
     return this.frame && this.sampleWind(this.frame, lon, lat, out) ? { u: out[0], v: out[1], w: out[2] } : null;
@@ -364,6 +387,15 @@
       return {
         gradient: 'linear-gradient(to right, rgba(' + CLOUD_RGB.join(',') + ',0.05), rgb(' + CLOUD_RGB.join(',') + '))',
         labels: [{ pos: 0, text: '0%' }, { pos: 1, text: '100% cloud cover' }]
+      };
+    }
+    if (this.kind === 'rainacc') {
+      var maxMm = this.meta.levels[this.level].maxMm, lut = ACC_LUTS[maxMm] || (ACC_LUTS[maxMm] = buildAccLut(maxMm));
+      for (i = 0; i <= 10; i++) stops.push(rgb(lut, Math.round(i / 10 * 255) * 4));
+      var marks = maxMm > 100 ? [1, 10, 25, 50, 150] : [1, 5, 15, 30, 60];
+      return {
+        gradient: 'linear-gradient(to right,' + stops.join(',') + ')',
+        labels: marks.map(function (m) { return { pos: Math.sqrt(m / maxMm), text: m === maxMm ? m + '+ mm' : String(m) }; })
       };
     }
     if (this.kind === 'turbulence') {
@@ -470,6 +502,11 @@
           var cover = Math.max(0, Math.min(1, out[0]));
           px[o] = CLOUD_RGB[0]; px[o + 1] = CLOUD_RGB[1]; px[o + 2] = CLOUD_RGB[2];
           px[o + 3] = Math.pow(cover, 1.6) * 115;  // thin cloud barely shows, full overcast stays see-through
+        } else if (kind === 'rainacc') {
+          var accMax = this.meta.levels[this.level].maxMm;
+          var accLut = ACC_LUTS[accMax] || (ACC_LUTS[accMax] = buildAccLut(accMax));
+          var ai = Math.max(0, Math.min(255, Math.round(out[0] * 255))) * 4;
+          px[o] = accLut[ai]; px[o + 1] = accLut[ai + 1]; px[o + 2] = accLut[ai + 2]; px[o + 3] = accLut[ai + 3];
         } else if (kind === 'wave' || kind === 'period' || kind === 'turbulence') {
           var table = kind === 'wave' ? WAVE_LUT : kind === 'period' ? PERIOD_LUT : TURB_LUT;
           var top = kind === 'wave' ? MAX_WAVE_M : kind === 'period' ? MAX_PERIOD_S : MAX_TURBULENCE;
