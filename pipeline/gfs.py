@@ -32,6 +32,14 @@ def file_url(run: dt.datetime, step: int) -> str:
     )
 
 
+def wave_url(run: dt.datetime, step: int) -> str:
+    """The GFS-Wave (WAVEWATCH III) global 0.25 degree file; it is small, and NaN over land."""
+    return (
+        f"{BUCKET}/gfs.{run:%Y%m%d}/{run:%H}/wave/gridded/"
+        f"gfswave.t{run:%H}z.global.0p25.f{step:03d}.grib2"
+    )
+
+
 def latest_run(now: dt.datetime | None = None, last_step: int = 120) -> dt.datetime:
     """Newest run whose last needed step is already published."""
     now = now or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)

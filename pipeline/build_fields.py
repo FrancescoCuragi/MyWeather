@@ -1,4 +1,4 @@
-"""Build the cloud and precipitation textures the app's map layers read.
+"""Build the cloud, precipitation and wave textures the app's map layers read.
 
 Layers written (each a folder of one PNG per forecast step, plus a shared meta.json):
 
@@ -7,7 +7,12 @@ Layers written (each a folder of one PNG per forecast step, plus a shared meta.j
     precip
         red   = rain rate, encoded sqrt(rate / 50 mm/h) * 255   (fine detail at light rain)
         green = snow fraction, 0..255 = 0..1  (1 where the model says precipitation falls as snow)
-        full 0.25 degree resolution; the others are 0.5 degree
+        full 0.25 degree resolution; the clouds are 0.5 degree
+    waves-height, waves-swell   (GFS-Wave, 0.25 degree; land is empty)
+        red = height, 0..255 = 0..16 m;  green/blue = east/north unit vector of the travel direction,
+        0..255 = -1..1
+    waves-period
+        grayscale, 0..255 = 0..30 s
 
 Output layout (published as-is to GitHub Pages):  out/fields/meta.json, out/fields/<layer>/f<step>.png
 """
@@ -53,6 +58,33 @@ def encode_precip(prate: np.ndarray, snow: np.ndarray) -> Image.Image:
     return Image.fromarray(rgb, "RGB")
 
 
+MAX_WAVE_M = 16.0
+MAX_PERIOD_S = 30.0
+
+
+def encode_wave(height: np.ndarray, direction_from: np.ndarray) -> Image.Image:
+    """Wave height in red; the direction the waves travel TOWARD as an (east, north) unit vector in green/blue.
+
+    Land (NaN) becomes height 0 and a zero vector (128, 128), which the app reads as "no data here".
+    """
+    sea = ~np.isnan(height)
+    toward = np.radians((np.nan_to_num(direction_from) + 180.0) % 360.0)
+    east = np.where(sea, np.sin(toward), 0.0)
+    north = np.where(sea, np.cos(toward), 0.0)
+    rgb = np.zeros((*height.shape, 3), dtype=np.uint8)
+    rgb[..., 0] = np.clip(np.rint(np.nan_to_num(height) / MAX_WAVE_M * 255.0), 0, 255)
+    # Direction only needs ~4 degrees of precision for flowing particles; 32 levels per axis compresses far better.
+    for channel, component in ((1, east), (2, north)):
+        level = np.rint((component * 0.5 + 0.5) * 31.0)  # 0..31
+        rgb[..., channel] = np.where(sea, level * 8 + 4, 128).astype(np.uint8)
+    return Image.fromarray(rgb, "RGB")
+
+
+def encode_period(period: np.ndarray) -> Image.Image:
+    gray = np.clip(np.rint(np.nan_to_num(period) / MAX_PERIOD_S * 255.0), 0, 255).astype(np.uint8)
+    return Image.fromarray(gray, "L")
+
+
 def build_step(run: dt.datetime, step: int, out_dir: Path, work_dir: Path) -> int:
     """Download every field for one forecast step and write all of that step's PNGs."""
     url = gfs.file_url(run, step)
@@ -73,6 +105,18 @@ def build_step(run: dt.datetime, step: int, out_dir: Path, work_dir: Path) -> in
     prate = gfs.fetch_field(url, index, "PRATE", "surface", tmp / "prate.grib2")
     snow = gfs.fetch_field(url, index, "CSNOW", "surface", tmp / "csnow.grib2")
     save("precip", encode_precip(prate, snow))
+
+    wave_file = gfs.wave_url(run, step)
+    wave_index = gfs.read_index(wave_file)
+
+    def wave_field(variable: str, level: str, name: str) -> np.ndarray:
+        return gfs.fetch_field(wave_file, wave_index, variable, level, tmp / f"{name}.grib2")
+
+    height = wave_field("HTSGW", "surface", "hs")
+    save("waves-height", encode_wave(height, wave_field("DIRPW", "surface", "dir")))
+    save("waves-period", encode_period(wave_field("PERPW", "surface", "period")))
+    save("waves-swell", encode_wave(wave_field("SWELL", "1 in sequence", "swell"),
+                                    wave_field("SWDIR", "1 in sequence", "swelldir")))
 
     shutil.rmtree(tmp, ignore_errors=True)
     return total
@@ -102,6 +146,9 @@ def main() -> None:
 
     layers = {name: {"kind": "cloud"} for name in CLOUDS}
     layers["precip"] = {"kind": "precip", "maxRate": MAX_RATE_MM_H}
+    layers["waves-height"] = {"kind": "wave", "maxHeight": MAX_WAVE_M}
+    layers["waves-swell"] = {"kind": "wave", "maxHeight": MAX_WAVE_M}
+    layers["waves-period"] = {"kind": "period", "maxPeriod": MAX_PERIOD_S}
     meta = {
         "run": run.strftime("%Y-%m-%dT%H:00:00Z"),
         "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
