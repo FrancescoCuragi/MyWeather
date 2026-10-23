@@ -217,9 +217,10 @@
     var FIELD_MODES = {
       wind: [['surface', 'Surface'], ['850mb', '850 hPa'], ['250mb', '250 hPa · jet']],
       clouds: [['clouds-total', 'Total'], ['clouds-low', 'Low'], ['clouds-mid', 'Mid'], ['clouds-high', 'High']],
-      rain: [['precip', 'Rain & snow']]
+      rain: [['precip', 'Rain & snow']],
+      waves: [['waves-height', 'Wave height'], ['waves-swell', 'Swell'], ['waves-period', 'Wave period']]
     };
-    var modeLevel = { wind: 'surface', clouds: 'clouds-total', rain: 'precip' };  // last level chosen per mode
+    var modeLevel = { wind: 'surface', clouds: 'clouds-total', rain: 'precip', waves: 'waves-height' };  // last level chosen per mode
     function isFieldMode(m) { return !!FIELD_MODES[m]; }
 
     var fieldSource = {
@@ -263,6 +264,7 @@
     var COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
     var LEVEL_NAMES = {
       surface: 'Surface (10 m)', '850mb': '850 hPa (~1.5 km)', '250mb': '250 hPa (~10 km)',
+      'waves-height': 'Wave height', 'waves-swell': 'Main swell height', 'waves-period': 'Wave period',
       'clouds-total': 'Total cloud cover', 'clouds-low': 'Low clouds', 'clouds-mid': 'Mid-level clouds', 'clouds-high': 'High clouds'
     };
 
@@ -294,6 +296,19 @@
           $('readoutSpeed').textContent = formatSpeed(speed);
           $('readoutArrow').style.transform = 'rotate(' + (from + 180) + 'deg)';
           $('readoutDir').textContent = 'from ' + COMPASS[Math.round(from / 22.5) % 16] + ' · ' + LEVEL_NAMES[wind.level] + ' · ' + when;
+        } else if (wind.kind === 'wave') {
+          // v.u metres; (v.v, v.w) is the east/north unit vector the waves travel toward.
+          var heading = (Math.atan2(v.v, v.w) * 180 / Math.PI + 360) % 360;
+          var cameFrom = (heading + 180) % 360;
+          var isSea = v.u >= 0.05 && Math.sqrt(v.v * v.v + v.w * v.w) >= 0.3;
+          $('readoutArrow').hidden = !isSea;
+          $('readoutSpeed').textContent = isSea ? v.u.toFixed(1) + ' m' : 'No wave data';
+          $('readoutArrow').style.transform = 'rotate(' + heading + 'deg)';
+          $('readoutDir').textContent = (isSea ? 'from ' + COMPASS[Math.round(cameFrom / 22.5) % 16] + ' · ' : 'Land · ') +
+            LEVEL_NAMES[wind.level] + ' · ' + when;
+        } else if (wind.kind === 'period') {
+          $('readoutSpeed').textContent = v.u < 0.5 ? 'No wave data' : v.u.toFixed(1) + ' s';
+          $('readoutDir').textContent = 'Time between waves · ' + when;
         } else if (wind.kind === 'cloud') {
           $('readoutSpeed').textContent = Math.round(Math.max(0, Math.min(1, v.u)) * 100) + '% cloud';
           $('readoutDir').textContent = LEVEL_NAMES[wind.level] + ' · ' + when;
@@ -321,6 +336,7 @@
       { mode: 'wind', icon: '🌬️', title: 'Wind', items: FIELD_MODES.wind },
       { mode: 'clouds', icon: '☁️', title: 'Clouds', items: FIELD_MODES.clouds },
       { mode: 'rain', icon: '🌧️', title: 'Rain & snow', items: [['precip', 'Forecast, next 5 days']] },
+      { mode: 'waves', icon: '🌊', title: 'Waves', items: FIELD_MODES.waves },
       { mode: 'radar', icon: '📡', title: 'Radar', items: [['radar', 'Observed rain, past 2 hours']] }
     ];
 
