@@ -9,9 +9,9 @@
 
   var BASE_URL = 'https://francescocuragi.github.io/MyWeather/wind/';
   var CELL = 4;                 // heatmap resolution: one sample per CELL x CELL css pixels
-  var PIXELS_PER_MS = 0.08;     // particle speed: css pixels moved per frame per m/s of wind
+  var PIXELS_PER_MS = 0.03;     // particle speed: css pixels moved per frame per m/s of wind
   var MAX_AGE = 90;             // frames before a particle respawns
-  var FADE = 0.9;               // trail persistence per frame (lower = shorter trails)
+  var FADE = 0.88;              // trail persistence per frame (lower = shorter trails)
   var CACHE_FRAMES = 16;
   // Speed (m/s) at which the colour scale tops out, per level.
   var COLOR_MAX = { surface: 25, '850mb': 40, '250mb': 80 };
@@ -28,7 +28,7 @@
       while (s < STOPS.length - 1 && STOPS[s][0] < f) s++;
       var a = STOPS[s - 1], b = STOPS[s], t = (f - a[0]) / (b[0] - a[0]);
       for (var c = 0; c < 3; c++) lut[i * 4 + c] = a[c + 1] + (b[c + 1] - a[c + 1]) * t;
-      lut[i * 4 + 3] = 70 + 110 * f;  // faint for calm air, stronger for storms
+      lut[i * 4 + 3] = 22 + 75 * f;  // nearly clear for calm air, stronger for storms, so the map stays readable
     }
     return lut;
   }
@@ -77,7 +77,7 @@
     this.parts.width = Math.round(this.w * this.dpr);
     this.parts.height = Math.round(this.h * this.dpr);
     this.pctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.count = Math.min(4000, Math.round(this.w * this.h / 110));
+    this.count = Math.min(4000, Math.round(this.w * this.h / 300));
     this.heatImage = this.hctx.createImageData(this.heat.width, this.heat.height);
   };
 
@@ -261,8 +261,8 @@
     ctx.fillStyle = 'rgba(0,0,0,' + FADE + ')';
     ctx.fillRect(0, 0, w, h);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 0.9;
     ctx.beginPath();
 
     var degPerPx = 360 / (512 * Math.pow(2, map.getZoom()));
