@@ -198,7 +198,7 @@
               id: id, type: 'raster', source: id,
               layout: { visibility: 'none' },
               paint: { 'raster-opacity': 0, 'raster-fade-duration': 0 }
-            });
+            }, labelLayerId());
             radar.frames.push({ time: frame.time, layerId: id });
           });
           radar.loaded = true;
@@ -211,6 +211,96 @@
       });
     }
 
+    /* ---------------- satellite: EUMETSAT MTG (Europe, Africa, the Atlantic) ---------------- */
+
+    var SAT_CAPS = 'https://view.eumetsat.int/geoserver/mtg_fd/ows?service=WMS&version=1.3.0&request=GetCapabilities';
+    var SAT_LAYERS = { 'sat-colour': 'rgb_geocolour', 'sat-ir': 'ir105_hrfi' };  // names inside EUMETSAT's mtg_fd workspace
+    var SAT_OPACITY = 0.92, SAT_STEP_MIN = 30, SAT_FRAMES = 7;                   // the last three hours, every half hour
+    var sat = { caps: null, byLevel: {} };                                        // byLevel[level] = [{time (ms), layerId}]
+
+    /**
+     * The first place-name layer of the basemap. Imagery goes just under it: roads, borders and road names are
+     * covered (they only add clutter on a satellite picture) while town and country names stay readable on top.
+     */
+    function labelLayerId() {
+      var first = map.getStyle().layers.filter(function (l) { return l['source-layer'] === 'place'; })[0];
+      return first ? first.id : undefined;
+    }
+
+    /** When the newest image of each satellite layer was taken (ms), read from the service's capabilities. */
+    function loadSatCaps() {
+      if (!sat.caps) {
+        sat.caps = fetch(SAT_CAPS).then(function (r) { return r.text(); }).then(function (xml) {
+          var ends = {};
+          Object.keys(SAT_LAYERS).forEach(function (level) {
+            var m = new RegExp('<Name>' + SAT_LAYERS[level] + '</Name>[\\s\\S]*?<Dimension[^>]*name="time"[^>]*>([^<]*)</Dimension>').exec(xml);
+            if (m) ends[level] = Date.parse(m[1].split('/')[1]);  // "start/end/period"
+          });
+          return ends;
+        });
+        sat.caps.catch(function () { sat.caps = null; });
+      }
+      return sat.caps;
+    }
+
+    function loadSat(level) {
+      if (sat.byLevel[level]) return Promise.resolve();
+      return loadSatCaps().then(function (ends) {
+        var end = ends[level];
+        if (!end) throw new Error('no satellite time');
+        var frames = [];
+        for (var k = SAT_FRAMES - 1; k >= 0; k--) {
+          var time = end - k * SAT_STEP_MIN * 60000, id = 'sat-' + level + '-' + k;
+          map.addSource(id, {
+            type: 'raster',
+            tiles: ['https://view.eumetsat.int/geoserver/ows?service=WMS&version=1.3.0&request=GetMap&layers=mtg_fd:' +
+              SAT_LAYERS[level] + '&styles=&format=image/png&transparent=true&crs=EPSG:3857&width=256&height=256' +
+              '&bbox={bbox-epsg-3857}&time=' + new Date(time).toISOString()],
+            tileSize: 256,
+            attribution: 'Imagery &copy; <a href="https://www.eumetsat.int/">EUMETSAT</a>'
+          });
+          map.addLayer({
+            id: id, type: 'raster', source: id,
+            layout: { visibility: 'none' },
+            paint: { 'raster-opacity': 0, 'raster-fade-duration': 0 }
+          }, labelLayerId());
+          frames.push({ time: time, layerId: id });
+        }
+        sat.byLevel[level] = frames;
+      });
+    }
+
+    /** Shows the frames of one satellite layer and hides all the others (null hides everything). */
+    function setSatVisible(level) {
+      Object.keys(sat.byLevel).forEach(function (lv) {
+        sat.byLevel[lv].forEach(function (f) { map.setLayoutProperty(f.layerId, 'visibility', lv === level ? 'visible' : 'none'); });
+      });
+    }
+
+    var satSource = {
+      get count() { return sat.byLevel[modeLevel.satellite].length; },
+      label: function (i) {
+        return new Date(sat.byLevel[modeLevel.satellite][i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      },
+      show: function (i) {
+        sat.byLevel[modeLevel.satellite].forEach(function (f, k) {
+          map.setPaintProperty(f.layerId, 'raster-opacity', k === i ? SAT_OPACITY : 0);
+        });
+      },
+      delayMs: function (i) { return i === sat.byLevel[modeLevel.satellite].length - 1 ? 1800 : 700; }
+    };
+
+    function showSatellite(level) {
+      var requestedMode = mode;
+      setStatus('Loading satellite…');
+      loadSat(level).then(function () {
+        if (mode !== requestedMode || modeLevel.satellite !== level) return;  // the user already moved on
+        setStatus('');
+        setSatVisible(level);
+        useSource(satSource, sat.byLevel[level].length - 1);
+      }).catch(function () { setStatus('Could not load satellite imagery'); });
+    }
+
     /* ---------------- field layers: wind, clouds, rain ---------------- */
 
     // Each mode that draws from the weather textures: its level chips as [texture folder, label].
@@ -221,7 +311,7 @@
       waves: [['waves-height', 'Wave height'], ['waves-swell', 'Swell'], ['waves-period', 'Wave period']],
       turbulence: [['cat-fl300', 'FL300 · 9.1 km', 'FL300'], ['cat-fl340', 'FL340 · 10.4 km', 'FL340'], ['cat-fl390', 'FL390 · 11.9 km', 'FL390']]
     };
-    var modeLevel = { wind: 'surface', clouds: 'clouds-total', rain: 'precip', waves: 'waves-height', turbulence: 'cat-fl340' };  // last level chosen per mode
+    var modeLevel = { wind: 'surface', clouds: 'clouds-total', rain: 'precip', waves: 'waves-height', turbulence: 'cat-fl340', satellite: 'sat-colour' };  // last level chosen per mode
     function isFieldMode(m) { return !!FIELD_MODES[m]; }
 
     var fieldSource = {
@@ -345,6 +435,8 @@
       { mode: 'rain', icon: '🌧️', title: 'Rain & snow', items: [['precip', 'Forecast, next 5 days']] },
       { mode: 'waves', icon: '🌊', title: 'Waves', items: FIELD_MODES.waves },
       { mode: 'turbulence', icon: '✈️', title: 'Turbulence', items: FIELD_MODES.turbulence },
+      { mode: 'satellite', icon: '🛰️', title: 'Satellite',
+        items: [['sat-colour', 'Natural colour · infrared at night', 'Colour'], ['sat-ir', 'Infrared · cloud-top temperature', 'Infrared']] },
       { mode: 'radar', icon: '📡', title: 'Radar', items: [['radar', 'Observed rain, past 2 hours']] }
     ];
 
@@ -378,7 +470,9 @@
       closeMenu();
       if (newMode === 'radar') { if (mode !== 'radar') setMode('radar'); return; }
       modeLevel[newMode] = level;
-      if (mode !== newMode) setMode(newMode); else chooseLevel(level);
+      if (mode !== newMode) setMode(newMode);
+      else if (newMode === 'satellite') { markChips(); showSatellite(level); }
+      else chooseLevel(level);
     }
 
     /** Highlights the active menu item and names the layer in the top bar. */
@@ -417,11 +511,14 @@
       mode = next;
       setStatus('');
       if (isFieldMode(mode)) {
-        setRadarVisible(false);
+        setRadarVisible(false); setSatVisible(null);
         wind.show();
         showLevel(modeLevel[mode], timeMs);
+      } else if (mode === 'satellite') {
+        wind.hide(); setRadarVisible(false);
+        showSatellite(modeLevel.satellite);
       } else {
-        wind.hide();
+        wind.hide(); setSatVisible(null);
         if (!radar.loaded) { setStatus('Loading radar…'); }
         var ready = radar.loaded ? Promise.resolve() : loadRadar();
         ready.then(function () {
