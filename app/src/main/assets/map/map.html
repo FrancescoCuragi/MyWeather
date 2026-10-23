@@ -68,6 +68,9 @@
     #readout .close { position: absolute; top: 2px; right: 6px; border: 0; background: none; color: #9aa0b8; font-size: 18px; padding: 4px; }
     #readout .speed { font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; }
     #readout .arrow { display: inline-block; font-size: 22px; margin-right: 6px; }
+    #readout .forecastBtn {
+      margin-top: 8px; border: 0; border-radius: 14px; padding: 7px 14px; background: #4a4f7a; color: #fff; font: inherit; font-size: 13px;
+    }
     #readout .meta { font-size: 12px; color: #9aa0b8; margin-top: 2px; }
     #status { position: fixed; z-index: 2; top: 70px; left: 12px; right: 12px; text-align: center; font-size: 13px; }
     [hidden] { display: none !important; }
@@ -89,6 +92,7 @@
     <div id="readoutWind"><span class="speed"><span class="arrow" id="readoutArrow">↑</span><span id="readoutSpeed"></span></span>
       <div class="meta" id="readoutDir"></div></div>
     <div class="meta" id="readoutPlace"></div>
+    <button class="forecastBtn" id="readoutForecast">Forecast for this point ›</button>
   </div>
 
   <div id="legend" hidden>
@@ -476,6 +480,10 @@
       }
       $('readoutPlace').textContent = tapPoint.lat.toFixed(3) + ', ' + tapPoint.lon.toFixed(3);
     }
+
+    $('readoutForecast').addEventListener('click', function () {
+      if (tapPoint && window.Android && Android.openPointForecast) Android.openPointForecast(tapPoint.lat, tapPoint.lon);
+    });
 
     $('readoutClose').addEventListener('click', function () {
       tapPoint = null;

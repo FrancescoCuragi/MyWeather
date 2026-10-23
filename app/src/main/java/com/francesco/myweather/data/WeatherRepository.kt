@@ -70,6 +70,10 @@ class WeatherRepository(
             )
         }
 
+    /** A forecast for any point on the map. Not saved: it is only shown, and kept if the user saves the place. */
+    suspend fun pointForecast(latitude: Double, longitude: Double): Result<ForecastResponse> =
+        runCatching { api.forecast(latitude, longitude) }
+
     /** Whether rain is falling or about to, from the 15-minute forecast. */
     suspend fun rainOutlook(latitude: Double, longitude: Double): Result<RainOutlook> =
         runCatching {

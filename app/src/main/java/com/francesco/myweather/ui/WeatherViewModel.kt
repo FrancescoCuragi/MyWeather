@@ -23,6 +23,7 @@ import com.francesco.myweather.data.WeatherRepository
 import com.francesco.myweather.data.db.AppDatabase
 import com.francesco.myweather.data.db.SavedPlace
 import com.francesco.myweather.notify.NotificationScheduler
+import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
@@ -49,6 +50,20 @@ sealed interface WeatherUiState {
     ) : WeatherUiState
 
     data class Error(val message: String) : WeatherUiState
+}
+
+/** The forecast sheet opened by tapping a point on the map. */
+sealed interface PointUiState {
+    data object Idle : PointUiState
+    data object Loading : PointUiState
+    data class Ready(
+        val name: String,
+        val subtitle: String?,
+        val latitude: Double,
+        val longitude: Double,
+        val forecast: ForecastResponse,
+    ) : PointUiState
+    data object Failed : PointUiState
 }
 
 sealed interface ModelsUiState {
@@ -133,6 +148,31 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
                 it + (place.key to result.fold({ c -> ModelsUiState.Ready(c) }, { ModelsUiState.Failed }))
             }
         }
+    }
+
+    private val _point = MutableStateFlow<PointUiState>(PointUiState.Idle)
+    val point: StateFlow<PointUiState> = _point.asStateFlow()
+
+    fun loadPoint(latitude: Double, longitude: Double) {
+        _point.value = PointUiState.Loading
+        viewModelScope.launch {
+            val forecast = repository.pointForecast(latitude, longitude)
+            val (name, subtitle) = locationProvider.placeName(latitude, longitude, fallback = "%.2f, %.2f".format(Locale.ROOT, latitude, longitude))
+            _point.value = forecast.fold(
+                { PointUiState.Ready(name, subtitle, latitude, longitude, it) },
+                { PointUiState.Failed },
+            )
+        }
+    }
+
+    fun dismissPoint() {
+        _point.value = PointUiState.Idle
+    }
+
+    /** Adds the place shown in the point sheet to the saved places, and closes the sheet. */
+    fun savePoint(ready: PointUiState.Ready) {
+        addPlace(GeoResult(id = 0, name = ready.name, latitude = ready.latitude, longitude = ready.longitude, country = ready.subtitle))
+        dismissPoint()
     }
 
     private val _search = MutableStateFlow<SearchState>(SearchState.Idle)

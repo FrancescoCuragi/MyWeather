@@ -35,6 +35,7 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
     val search by viewModel.search.collectAsStateWithLifecycle()
     val focusKey by viewModel.focusKey.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val point by viewModel.point.collectAsStateWithLifecycle()
     val notificationPrefs by viewModel.notificationPrefs.collectAsStateWithLifecycle()
 
     // Adding a place jumps back to the forecast tab, where the pager scrolls to it.
@@ -43,6 +44,7 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
     }
 
     CompositionLocalProvider(LocalSettings provides settings) {
+    PointForecastSheet(point, onSave = viewModel::savePoint, onDismiss = viewModel::dismissPoint)
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -68,7 +70,7 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
                     onRefresh = viewModel::refresh,
                     onLoadModels = viewModel::loadModels,
                 )
-                Tab.Map -> MapScreen(center = places.firstOrNull(), units = settings)
+                Tab.Map -> MapScreen(center = places.firstOrNull(), units = settings, onPointForecast = viewModel::loadPoint)
                 Tab.Places -> LocationsScreen(
                     gpsPlace = places.firstOrNull { it.isCurrentLocation },
                     saved = saved,

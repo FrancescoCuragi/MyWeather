@@ -31,9 +31,10 @@ private const val DEFAULT_ZOOM = 6
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun MapScreen(center: Place?, units: UserSettings) {
+fun MapScreen(center: Place?, units: UserSettings, onPointForecast: (Double, Double) -> Unit) {
     // The page loads on its own schedule, so it is told the units both when they change and when it finishes loading.
     val latestUnits by rememberUpdatedState(units)
+    val latestOnPoint by rememberUpdatedState(onPointForecast)
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { context ->
@@ -46,6 +47,12 @@ fun MapScreen(center: Place?, units: UserSettings) {
                         @JavascriptInterface
                         fun onMapTap(lat: Double, lon: Double) {
                             Log.d(TAG, "Map tapped at $lat, $lon")
+                        }
+
+                        /** The page's "Forecast for this point" button. JavaScript calls arrive on a background thread. */
+                        @JavascriptInterface
+                        fun openPointForecast(lat: Double, lon: Double) {
+                            post { latestOnPoint(lat, lon) }
                         }
                     },
                     "Android",

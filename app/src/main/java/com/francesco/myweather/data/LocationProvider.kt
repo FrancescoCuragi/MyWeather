@@ -24,26 +24,26 @@ class LocationProvider(private val context: Context) {
                 .addOnSuccessListener { cont.resume(it) }
                 .addOnFailureListener { cont.resume(null) }
         } ?: return null
-        val (name, subtitle) = reverseGeocode(location)
+        val (name, subtitle) = placeName(location.latitude, location.longitude)
         return Place(name, subtitle, location.latitude, location.longitude, isCurrentLocation = true)
     }
 
     /** Best-effort city name for a position; falls back to a generic label offline or without a geocoder. */
-    private suspend fun reverseGeocode(location: Location): Pair<String, String?> {
+    suspend fun placeName(latitude: Double, longitude: Double, fallback: String = "My location"): Pair<String, String?> {
         val address = runCatching {
             val geocoder = Geocoder(context, Locale.getDefault())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 suspendCancellableCoroutine { cont ->
-                    geocoder.getFromLocation(location.latitude, location.longitude, 1) { cont.resume(it.firstOrNull()) }
+                    geocoder.getFromLocation(latitude, longitude, 1) { cont.resume(it.firstOrNull()) }
                 }
             } else {
                 withContext(Dispatchers.IO) {
                     @Suppress("DEPRECATION")
-                    geocoder.getFromLocation(location.latitude, location.longitude, 1)?.firstOrNull()
+                    geocoder.getFromLocation(latitude, longitude, 1)?.firstOrNull()
                 }
             }
         }.getOrNull()
-        val name = address?.locality ?: address?.subAdminArea ?: address?.adminArea ?: "My location"
+        val name = address?.locality ?: address?.subAdminArea ?: address?.adminArea ?: fallback
         return name to address?.countryName
     }
 }
