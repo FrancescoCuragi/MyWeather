@@ -55,31 +55,31 @@
 - [x] **Radar map**: animated past radar loop (RainViewer) on MapLibre
 - [x] **Details panel**: UV, humidity, pressure, visibility, dew point, sunrise/sunset, moon phase, air quality
 - [x] **Units & settings**: °C/°F, km/h / m/s / kt / Bft, mm/in, m·km / ft·mi, 24 h
-- [~] **Dynamic theming**: Material You colours and dark mode done (the app is dark-only); background reflecting conditions not done
+- [x] **Dynamic theming**: Material You colours, dark-only, and an animated sky behind the forecast that follows the weather
 - [x] **Offline cache**: last forecast shown instantly on launch
 
 ### v2 — "The Windy part"
-- [~] **Full-screen weather map** with layer picker (hamburger menu, one layer at a time):
-  - ✅ Wind (animated particles 🌬️) at surface / 850 / 250 hPa; ❌ gusts
-  - ❌ Temperature, feels-like
+- [x] **Full-screen weather map** with layer picker (hamburger menu, one layer at a time):
+  - ✅ Wind (animated particles 🌬️) at surface / 850 / 250 hPa, and gusts
+  - ✅ Temperature, feels-like, freezing level
   - ✅ Precipitation rate, rain & snow, and 3 h / 24 h totals
   - ✅ Clouds (low/mid/high/total), ✅ satellite (EUMETSAT MTG, Europe/Africa/Atlantic)
-  - ❌ Pressure (isobars), humidity, CAPE/thunderstorm risk
-  - ✅ Waves, swell and period (NOAA GFS-Wave); ❌ snow depth, freezing level
+  - ✅ Pressure with isobars, humidity, CAPE/thunderstorm energy
+  - ✅ Waves, swell and period (NOAA GFS-Wave), snow depth
   - ❌ Air quality map (the AQI number is in the forecast details)
-  - ✅ Clear-air turbulence at FL300 / 340 / 390 (Ellrod index); the jet stream is the 250 hPa wind layer (not yet overlaid on turbulence)
+  - ✅ Clear-air turbulence at FL300 / 340 / 390 (Ellrod index); the jet-stream wind is drawn faintly over it
 - [x] **Timeline scrubber** (hourly, blends between the 3-hourly model steps) (play/pause through forecast hours)
-- [~] **Tap anywhere** on the map → readout of the layer's value there (not yet a full point forecast)
+- [x] **Tap anywhere** on the map → readout of the layer's value, and a full point forecast sheet
 - [ ] **Model switcher** for the map layers (only GFS is on the map; the comparison card covers the point forecast)
 - [x] **Model comparison** view (multiple models side by side for one location)
 - [x] **Meteogram** chart (temp, precip, wind, pressure over time)
 
 ### v3 — Nice-to-haves
-- [x] Home-screen **widget** (Glance) — big size done; small/medium optional
+- [x] Home-screen **widget** (Glance) — adapts from a 2x2 tile to a strip to the full big layout
 - [x] **Notifications**: rain starting soon, severe-weather warnings (MeteoAlarm, Belgium only so far), daily morning summary
 - [ ] Wind/sounding/altitude views (pressure-level winds, temperature by altitude)
-- [ ] Favourite-spot "activity scores" (e.g. good for cycling / running)
-- [ ] Historical "this day last year" comparison
+- [x] "Activity scores" (cycling / running / walking) for today and for each expanded day
+- [x] Historical "this day last year" comparison, with the 5-year average
 
 ---
 
