@@ -11,8 +11,29 @@
     #overlay { position: absolute; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; }
 
     .bar { position: fixed; z-index: 2; display: flex; align-items: center; gap: 8px; }
-    #chips { top: 12px; left: 12px; right: 64px; flex-direction: column; align-items: flex-start; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    #menuBtn {
+      position: fixed; z-index: 3; top: 12px; left: 12px; width: 44px; height: 44px; border-radius: 22px;
+      border: 0; background: rgba(30, 34, 48, 0.92); color: #e6e8f0; font-size: 22px; padding: 0;
+    }
+    #layerName {
+      position: fixed; z-index: 2; top: 12px; left: 64px; height: 44px; line-height: 44px; padding: 0 16px;
+      border-radius: 22px; background: rgba(30, 34, 48, 0.92); max-width: calc(100% - 140px);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #menu { position: fixed; z-index: 5; top: 0; right: 0; bottom: 0; left: 0; display: flex; }
+    #menu .sheet {
+      width: min(320px, 82%); box-sizing: border-box; overflow-y: auto; padding: 14px 12px 28px;
+      background: #171c2a; box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+    }
+    #menu .backdrop { flex: 1; background: rgba(0, 0, 0, 0.45); }
+    #menu h2 { font-size: 20px; margin: 4px 8px 6px; font-weight: 500; }
+    #menu .group { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #9aa0b8; margin: 18px 8px 4px; }
+    #menu .item {
+      display: block; width: 100%; border: 0; background: none; color: #e6e8f0; font: inherit;
+      padding: 12px; border-radius: 12px; text-align: left;
+    }
+    #menu .item.on { background: #4a4f7a; color: #fff; }
     .chip {
       border: 0; border-radius: 18px; padding: 8px 14px; font: inherit; color: #e6e8f0;
       background: rgba(30, 34, 48, 0.88);
@@ -43,7 +64,7 @@
     #readout .speed { font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; }
     #readout .arrow { display: inline-block; font-size: 22px; margin-right: 6px; }
     #readout .meta { font-size: 12px; color: #9aa0b8; margin-top: 2px; }
-    #status { position: fixed; z-index: 2; top: 120px; left: 12px; right: 12px; text-align: center; font-size: 13px; }
+    #status { position: fixed; z-index: 2; top: 70px; left: 12px; right: 12px; text-align: center; font-size: 13px; }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -51,14 +72,11 @@
   <div id="map"></div>
   <div id="status"></div>
 
-  <div id="chips" class="bar">
-    <div class="row" id="layerChips">
-      <button class="chip" data-mode="wind">Wind</button>
-      <button class="chip" data-mode="clouds">Clouds</button>
-      <button class="chip" data-mode="rain">Rain</button>
-      <button class="chip" data-mode="radar">Radar</button>
-    </div>
-    <div class="row" id="levelChips"></div>
+  <button id="menuBtn" aria-label="Layers">☰</button>
+  <div id="layerName"></div>
+  <div id="menu" hidden>
+    <div class="sheet" id="menuSheet"></div>
+    <div class="backdrop" id="menuBackdrop"></div>
   </div>
 
   <div id="readout" hidden>
@@ -298,24 +316,59 @@
 
     /* ---------------- modes and chips ---------------- */
 
-    function markChips() {
-      document.querySelectorAll('[data-mode]').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === mode); });
-      document.querySelectorAll('[data-level]').forEach(function (b) { b.classList.toggle('on', b.dataset.level === modeLevel[mode]); });
-      $('legend').hidden = !isFieldMode(mode);
+    /** What the layer menu lists: a group per mode, each item a [texture folder, label] pair. */
+    var MENU = [
+      { mode: 'wind', icon: '🌬️', title: 'Wind', items: FIELD_MODES.wind },
+      { mode: 'clouds', icon: '☁️', title: 'Clouds', items: FIELD_MODES.clouds },
+      { mode: 'rain', icon: '🌧️', title: 'Rain & snow', items: [['precip', 'Forecast, next 5 days']] },
+      { mode: 'radar', icon: '📡', title: 'Radar', items: [['radar', 'Observed rain, past 2 hours']] }
+    ];
+
+    function openMenu() { $('menu').hidden = false; }
+    function closeMenu() { $('menu').hidden = true; }
+
+    function buildMenu() {
+      var sheet = $('menuSheet');
+      sheet.innerHTML = '<h2>Layers</h2>';
+      MENU.forEach(function (group) {
+        var title = document.createElement('div');
+        title.className = 'group';
+        title.textContent = group.icon + '  ' + group.title;
+        sheet.appendChild(title);
+        group.items.forEach(function (item) {
+          var b = document.createElement('button');
+          b.className = 'item';
+          b.dataset.mode = group.mode;
+          b.dataset.level = item[0];
+          b.textContent = item[1];
+          b.addEventListener('click', function () { selectLayer(group.mode, item[0]); });
+          sheet.appendChild(b);
+        });
+      });
+      $('menuBtn').addEventListener('click', openMenu);
+      $('menuBackdrop').addEventListener('click', closeMenu);
     }
 
-    function buildLevelChips() {
-      var row = $('levelChips'), levels = FIELD_MODES[mode] || [];
-      row.innerHTML = '';
-      levels.forEach(function (l) {
-        var b = document.createElement('button');
-        b.className = 'chip';
-        b.dataset.level = l[0];
-        b.textContent = l[1];
-        b.addEventListener('click', function () { chooseLevel(l[0]); });
-        row.appendChild(b);
+    function selectLayer(newMode, level) {
+      closeMenu();
+      if (newMode === 'radar') { if (mode !== 'radar') setMode('radar'); return; }
+      modeLevel[newMode] = level;
+      if (mode !== newMode) setMode(newMode); else chooseLevel(level);
+    }
+
+    /** Highlights the active menu item and names the layer in the top bar. */
+    function markChips() {
+      var label = '';
+      document.querySelectorAll('#menu .item').forEach(function (b) {
+        var on = b.dataset.mode === mode && (mode === 'radar' || b.dataset.level === modeLevel[mode]);
+        b.classList.toggle('on', on);
+        if (on) {
+          var group = MENU.filter(function (g) { return g.mode === mode; })[0];
+          label = group.items.length > 1 ? group.title + ' · ' + b.textContent : group.title;
+        }
       });
-      row.hidden = levels.length < 2;  // a lone level needs no picker
+      $('layerName').textContent = label;
+      $('legend').hidden = !isFieldMode(mode);
     }
 
     /** Shows a texture layer at the time the timeline is on (or now, when coming from elsewhere). */
@@ -338,7 +391,6 @@
       var timeMs = currentTimeMs();  // read before anything changes, so the chosen time carries over
       mode = next;
       setStatus('');
-      buildLevelChips();
       if (isFieldMode(mode)) {
         setRadarVisible(false);
         wind.show();
@@ -359,10 +411,6 @@
       updateReadout();
     }
 
-    document.querySelectorAll('[data-mode]').forEach(function (b) {
-      b.addEventListener('click', function () { if (b.dataset.mode !== mode) setMode(b.dataset.mode); });
-    });
-
     map.on('load', function () {
       // Start with the attribution collapsed to its (i) button; it expands when tapped.
       var attrib = document.querySelector('.maplibregl-ctrl-attrib');
@@ -372,6 +420,7 @@
       host.id = 'overlay';
       map.getContainer().appendChild(host);
       wind = new WindLayer(map, host);
+      buildMenu();
       setMode('wind');
     });
 
