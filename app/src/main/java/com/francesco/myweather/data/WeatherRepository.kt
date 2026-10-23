@@ -31,6 +31,7 @@ class WeatherRepository(
     private val api: OpenMeteoApi = createRetrofit(OpenMeteoApi.BASE_URL).create(OpenMeteoApi::class.java),
     private val airApi: AirQualityApi = createRetrofit(AirQualityApi.BASE_URL).create(AirQualityApi::class.java),
     private val geocodingApi: GeocodingApi = createRetrofit(GeocodingApi.BASE_URL).create(GeocodingApi::class.java),
+    private val historyApi: HistoryApi = createRetrofit(HistoryApi.BASE_URL).create(HistoryApi::class.java),
 ) {
     suspend fun searchPlaces(query: String): Result<List<GeoResult>> =
         runCatching { geocodingApi.search(query).results }
@@ -67,6 +68,33 @@ class WeatherRepository(
                         model.id to array.map { (it as? JsonPrimitive)?.doubleOrNull }
                     }.toMap()
                 },
+            )
+        }
+
+    /**
+     * This calendar day last year, and the average high and low for the same date over the last [years] years.
+     * The archive lags real time by a few days, so a date in the last few days has no data yet; that comes back
+     * as a null day rather than an error.
+     */
+    suspend fun historyFor(latitude: Double, longitude: Double, date: java.time.LocalDate, years: Int = 5): Result<HistoryComparison> =
+        runCatching {
+            val days = (1..years).mapNotNull { back ->
+                val day = runCatching { date.minusYears(back.toLong()) }.getOrNull() ?: return@mapNotNull null  // 29 Feb
+                val daily = historyApi.day(latitude, longitude, day.toString(), day.toString()).daily
+                val high = daily.temperatureMax.firstOrNull() ?: return@mapNotNull null
+                val low = daily.temperatureMin.firstOrNull() ?: return@mapNotNull null
+                HistoricalDay(
+                    date = day.toString(), high = high, low = low,
+                    rainMm = daily.precipitation.firstOrNull() ?: 0.0,
+                    weatherCode = daily.weatherCode.firstOrNull() ?: 0,
+                    windMaxKmh = daily.windMax.firstOrNull() ?: 0.0,
+                )
+            }
+            HistoryComparison(
+                lastYear = days.firstOrNull { it.date == date.minusYears(1).toString() },
+                averageHigh = days.takeIf { it.isNotEmpty() }?.map { it.high }?.average(),
+                averageLow = days.takeIf { it.isNotEmpty() }?.map { it.low }?.average(),
+                years = days.size,
             )
         }
 

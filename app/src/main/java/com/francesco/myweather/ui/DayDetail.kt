@@ -47,6 +47,7 @@ fun DayDetail(forecast: ForecastResponse, dayIndex: Int) {
         Column {
             Text(temperatures, style = MaterialTheme.typography.bodyMedium)
             if (conditions.isNotEmpty()) Text(conditions, style = MaterialTheme.typography.bodyMedium)
+            ActivityLine(forecast, date)
             Text(sun, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -31,6 +31,7 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
     val places by viewModel.places.collectAsStateWithLifecycle()
     val forecasts by viewModel.forecasts.collectAsStateWithLifecycle()
     val models by viewModel.models.collectAsStateWithLifecycle()
+    val history by viewModel.history.collectAsStateWithLifecycle()
     val saved by viewModel.savedPlaces.collectAsStateWithLifecycle()
     val search by viewModel.search.collectAsStateWithLifecycle()
     val focusKey by viewModel.focusKey.collectAsStateWithLifecycle()
@@ -65,10 +66,12 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
                     places = places,
                     forecasts = forecasts,
                     models = models,
+                    history = history,
                     focusKey = focusKey,
                     onFocusHandled = viewModel::focusHandled,
                     onRefresh = viewModel::refresh,
                     onLoadModels = viewModel::loadModels,
+                    onLoadHistory = viewModel::loadHistory,
                 )
                 Tab.Map -> MapScreen(center = places.firstOrNull(), units = settings, onPointForecast = viewModel::loadPoint)
                 Tab.Places -> LocationsScreen(

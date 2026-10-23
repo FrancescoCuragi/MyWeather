@@ -42,7 +42,14 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
-fun HomeScreen(state: WeatherUiState, models: ModelsUiState?, onRefresh: () -> Unit, onLoadModels: () -> Unit) {
+fun HomeScreen(
+    state: WeatherUiState,
+    models: ModelsUiState?,
+    history: HistoryUiState?,
+    onRefresh: () -> Unit,
+    onLoadModels: () -> Unit,
+    onLoadHistory: () -> Unit,
+) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         when (state) {
             WeatherUiState.Loading -> CircularProgressIndicator()
@@ -54,7 +61,7 @@ fun HomeScreen(state: WeatherUiState, models: ModelsUiState?, onRefresh: () -> U
                 Text(state.message, textAlign = TextAlign.Center)
                 Button(onClick = onRefresh) { Text("Retry") }
             }
-            is WeatherUiState.Success -> ForecastContent(state, models, onRefresh, onLoadModels)
+            is WeatherUiState.Success -> ForecastContent(state, models, history, onRefresh, onLoadModels, onLoadHistory)
         }
     }
 }
@@ -64,8 +71,10 @@ fun HomeScreen(state: WeatherUiState, models: ModelsUiState?, onRefresh: () -> U
 private fun ForecastContent(
     state: WeatherUiState.Success,
     models: ModelsUiState?,
+    history: HistoryUiState?,
     onRefresh: () -> Unit,
     onLoadModels: () -> Unit,
+    onLoadHistory: () -> Unit,
 ) {
     val forecast = state.forecast
     var openDay by rememberSaveable { mutableIntStateOf(-1) }  // the expanded day in the list, or -1
@@ -83,12 +92,14 @@ private fun ForecastContent(
             item { HeroCard(state.placeName, forecast) }
             item { UpdatedCaption(state) }
             item { HourlyStrip(forecast) }
+            item { ActivityCard(forecast) }
             item { MeteogramCard(forecast) }
             item { DetailsGrid(state) }
             item { Text("Next 14 days", style = MaterialTheme.typography.titleMedium) }
             items(forecast.daily.time.indices.toList()) { i ->
                 DailyRow(forecast, i, expanded = openDay == i, onClick = { openDay = if (openDay == i) -1 else i })
             }
+            item { HistoryCard(forecast, history, onLoadHistory) }
             item { ModelComparisonCard(forecast, models, onLoadModels) }
         }
     }

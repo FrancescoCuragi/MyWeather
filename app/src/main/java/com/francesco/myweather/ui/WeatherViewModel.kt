@@ -9,6 +9,7 @@ import com.francesco.myweather.data.ForecastResponse
 import com.francesco.myweather.data.GeoResult
 import com.francesco.myweather.data.LocationProvider
 import com.francesco.myweather.data.ModelComparison
+import com.francesco.myweather.data.HistoryComparison
 import com.francesco.myweather.data.LengthUnit
 import com.francesco.myweather.data.NotificationPrefs
 import com.francesco.myweather.data.PrecipitationUnit
@@ -64,6 +65,12 @@ sealed interface PointUiState {
         val forecast: ForecastResponse,
     ) : PointUiState
     data object Failed : PointUiState
+}
+
+sealed interface HistoryUiState {
+    data object Loading : HistoryUiState
+    data class Ready(val comparison: HistoryComparison) : HistoryUiState
+    data object Failed : HistoryUiState
 }
 
 sealed interface ModelsUiState {
@@ -147,6 +154,20 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             _models.update {
                 it + (place.key to result.fold({ c -> ModelsUiState.Ready(c) }, { ModelsUiState.Failed }))
             }
+        }
+    }
+
+    private val _history = MutableStateFlow<Map<String, HistoryUiState>>(emptyMap())
+    val history: StateFlow<Map<String, HistoryUiState>> = _history.asStateFlow()
+
+    /** Loads "this day in past years" for a place the first time its card scrolls into view. */
+    fun loadHistory(place: Place) {
+        val current = _history.value[place.key]
+        if (current is HistoryUiState.Loading || current is HistoryUiState.Ready) return
+        _history.update { it + (place.key to HistoryUiState.Loading) }
+        viewModelScope.launch {
+            val result = repository.historyFor(place.latitude, place.longitude, java.time.LocalDate.now())
+            _history.update { it + (place.key to result.fold({ c -> HistoryUiState.Ready(c) }, { HistoryUiState.Failed })) }
         }
     }
 

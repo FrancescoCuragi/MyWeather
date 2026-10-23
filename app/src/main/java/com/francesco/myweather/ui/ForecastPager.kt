@@ -25,10 +25,12 @@ fun ForecastPager(
     places: List<Place>,
     forecasts: Map<String, WeatherUiState>,
     models: Map<String, ModelsUiState>,
+    history: Map<String, HistoryUiState>,
     focusKey: String?,
     onFocusHandled: () -> Unit,
     onRefresh: (Place) -> Unit,
     onLoadModels: (Place) -> Unit,
+    onLoadHistory: (Place) -> Unit,
 ) {
     if (places.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -83,8 +85,10 @@ fun ForecastPager(
             HomeScreen(
                 state = forecasts[place.key] ?: WeatherUiState.Loading,
                 models = models[place.key],
+                history = history[place.key],
                 onRefresh = { onRefresh(place) },
                 onLoadModels = { onLoadModels(place) },
+                onLoadHistory = { onLoadHistory(place) },
             )
         }
     }
