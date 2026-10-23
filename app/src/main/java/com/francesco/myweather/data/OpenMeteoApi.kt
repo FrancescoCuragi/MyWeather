@@ -18,6 +18,16 @@ interface OpenMeteoApi {
         @Query("timezone") timezone: String = "auto",
     ): ForecastResponse
 
+    /** Rain in 15-minute steps for the next few hours, used for the "rain starting soon" alert. */
+    @GET("v1/forecast")
+    suspend fun minutelyRain(
+        @Query("latitude") latitude: Double,
+        @Query("longitude") longitude: Double,
+        @Query("minutely_15") minutely: String = "precipitation",
+        @Query("forecast_minutely_15") steps: Int = 12,
+        @Query("timezone") timezone: String = "auto",
+    ): MinutelyResponse
+
     /** The same forecast from several weather models at once; keys come back as "<variable>_<model>". */
     @GET("v1/forecast")
     suspend fun modelForecast(
@@ -134,4 +144,21 @@ val FORECAST_MODELS = listOf(
 data class ModelComparison(
     val times: List<String>,
     val values: Map<String, Map<String, List<Double?>>>,  // variable -> model id -> hourly values
+)
+
+@Serializable
+data class MinutelyResponse(
+    @SerialName("utc_offset_seconds") val utcOffsetSeconds: Int,
+    @SerialName("minutely_15") val minutely: Minutely15,
+)
+
+@Serializable
+data class Minutely15(val time: List<String>, val precipitation: List<Double?>)
+
+/** What the next two hours look like for rain. */
+data class RainOutlook(
+    /** True if rain is already falling in the current 15-minute slot. */
+    val raining: Boolean,
+    /** Minutes until the first rainy slot after now, or null if the next two hours stay dry. */
+    val minutesToRain: Int?,
 )

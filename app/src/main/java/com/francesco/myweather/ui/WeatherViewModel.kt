@@ -9,6 +9,7 @@ import com.francesco.myweather.data.ForecastResponse
 import com.francesco.myweather.data.GeoResult
 import com.francesco.myweather.data.LocationProvider
 import com.francesco.myweather.data.ModelComparison
+import com.francesco.myweather.data.NotificationPrefs
 import com.francesco.myweather.data.Place
 import com.francesco.myweather.data.SettingsRepository
 import com.francesco.myweather.data.TemperatureUnit
@@ -19,7 +20,9 @@ import androidx.glance.appwidget.updateAll
 import com.francesco.myweather.data.WeatherRepository
 import com.francesco.myweather.data.db.AppDatabase
 import com.francesco.myweather.data.db.SavedPlace
+import com.francesco.myweather.notify.NotificationScheduler
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -68,6 +71,18 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
 
     val settings: StateFlow<UserSettings> =
         settingsRepository.settings.stateIn(viewModelScope, SharingStarted.Eagerly, UserSettings())
+
+    val notificationPrefs: StateFlow<NotificationPrefs> =
+        settingsRepository.notificationPrefs.stateIn(viewModelScope, SharingStarted.Eagerly, NotificationPrefs())
+
+    /** Changes the alert settings and starts or stops the background check to match. */
+    fun updateNotifications(change: (NotificationPrefs) -> NotificationPrefs) {
+        viewModelScope.launch {
+            NotificationScheduler.sync(getApplication(), settingsRepository.updateNotificationPrefs(change))
+        }
+    }
+
+    fun checkNotificationsNow() = NotificationScheduler.checkNow(getApplication())
 
     fun setTemperatureUnit(unit: TemperatureUnit) {
         viewModelScope.launch { settingsRepository.setTemperatureUnit(unit) }
@@ -121,6 +136,8 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     private val loadedKeys = mutableSetOf<String>()
 
     init {
+        // Make sure the background check is scheduled whenever alerts are on, including after an app update.
+        viewModelScope.launch { NotificationScheduler.sync(application, settingsRepository.notificationPrefs.first()) }
         viewModelScope.launch {
             places.collect { list ->
                 list.firstOrNull()?.let { settingsRepository.setPrimaryPlace(it) }

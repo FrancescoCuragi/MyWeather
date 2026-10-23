@@ -35,6 +35,7 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
     val search by viewModel.search.collectAsStateWithLifecycle()
     val focusKey by viewModel.focusKey.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val notificationPrefs by viewModel.notificationPrefs.collectAsStateWithLifecycle()
 
     // Adding a place jumps back to the forecast tab, where the pager scrolls to it.
     LaunchedEffect(focusKey) {
@@ -82,6 +83,9 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
                     onTemperatureUnit = viewModel::setTemperatureUnit,
                     onWindUnit = viewModel::setWindUnit,
                     onUse24Hour = viewModel::setUse24Hour,
+                    notificationPrefs = notificationPrefs,
+                    onNotificationChange = viewModel::updateNotifications,
+                    onCheckNow = viewModel::checkNotificationsNow,
                 )
             }
         }

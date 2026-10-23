@@ -1,6 +1,10 @@
 package com.francesco.myweather.data
 
 import java.io.File
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -66,10 +70,29 @@ class WeatherRepository(
             )
         }
 
+    /** Whether rain is falling or about to, from the 15-minute forecast. */
+    suspend fun rainOutlook(latitude: Double, longitude: Double): Result<RainOutlook> =
+        runCatching {
+            val response = api.minutelyRain(latitude, longitude)
+            val now = LocalDateTime.ofEpochSecond(Instant.now().epochSecond + response.utcOffsetSeconds, 0, ZoneOffset.UTC)
+            val slots = response.minutely.time.map(LocalDateTime::parse)
+            val rainy = { i: Int -> (response.minutely.precipitation[i] ?: 0.0) >= RAIN_PER_SLOT_MM }
+            // The current slot is the one that has not finished yet.
+            val current = slots.indexOfFirst { it.plusMinutes(15).isAfter(now) }.coerceAtLeast(0)
+            val next = (current + 1 until slots.size).firstOrNull(rainy)
+            RainOutlook(
+                raining = rainy(current),
+                minutesToRain = next?.let { Duration.between(now, slots[it]).toMinutes().toInt().coerceAtLeast(0) },
+            )
+        }
+
     private fun cacheFile(latitude: Double, longitude: Double) =
         File(cacheDir, "forecast_%.2f_%.2f.json".format(Locale.ROOT, latitude, longitude))
 
     private companion object {
+        /** About 0.4 mm/h: the faintest rain worth an alert. */
+        const val RAIN_PER_SLOT_MM = 0.1
+
         val json = Json { ignoreUnknownKeys = true }
 
         fun createRetrofit(baseUrl: String): Retrofit =
