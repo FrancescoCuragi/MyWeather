@@ -8,6 +8,7 @@
  *   precip  red = sqrt(rain rate / 50 mm/h) * 255, green = snow fraction * 255
  *   wave    red = height (0..16 m), green/blue = east/north unit vector of the direction the waves travel
  *   period  grayscale, 0..255 = 0..30 s
+ *   turbulence  grayscale, 0..255 = Ellrod index 0..20 (1e-7 s^-2): ~4 light, ~8 moderate, ~12 severe
  */
 (function () {
   'use strict';
@@ -21,6 +22,7 @@
     if (level.indexOf('clouds-') === 0) return { base: 'fields', kind: 'cloud' };
     if (level === 'precip') return { base: 'fields', kind: 'precip' };
     if (level === 'waves-period') return { base: 'fields', kind: 'period' };
+    if (level.indexOf('cat-') === 0) return { base: 'fields', kind: 'turbulence' };
     if (level.indexOf('waves-') === 0) return { base: 'fields', kind: 'wave' };
     return { base: 'wind', kind: 'wind' };
   }
@@ -70,7 +72,7 @@
   }
   var RAIN_LUT = buildPrecipLut(RAIN_STOPS), SNOW_LUT = buildPrecipLut(SNOW_STOPS);
 
-  var MAX_WAVE_M = 16, MAX_PERIOD_S = 30;
+  var MAX_WAVE_M = 16, MAX_PERIOD_S = 30, MAX_TURBULENCE = 20;
   var WAVE_STOPS = [[0, 25, 40, 120], [1, 45, 90, 200], [2, 60, 150, 230], [3.5, 100, 185, 235], [5, 160, 210, 245],
                     [7, 230, 190, 235], [10, 235, 120, 190], [14, 190, 60, 170]];
   var PERIOD_STOPS = [[0, 40, 40, 110], [6, 90, 60, 190], [9, 170, 80, 200], [12, 240, 110, 170], [16, 250, 170, 110],
@@ -91,6 +93,9 @@
   // Land is stored as height 0, so it stays clear; open sea gets a gentle tint that firms up with bigger seas.
   var WAVE_LUT = buildValueLut(WAVE_STOPS, MAX_WAVE_M, function (h) { return h < 0.05 ? 0 : 50 + 85 * Math.min(1, h / 6); });
   var PERIOD_LUT = buildValueLut(PERIOD_STOPS, MAX_PERIOD_S, function (t) { return t < 0.5 ? 0 : 130; });
+  // Turbulence by Ellrod index: invisible below ~2, a faint yellow at 'light' (4), orange at 'moderate' (8), red at 'severe' (12).
+  var TURB_STOPS = [[0, 60, 90, 160], [4, 250, 225, 70], [8, 245, 140, 40], [12, 230, 55, 60], [20, 170, 40, 170]];
+  var TURB_LUT = buildValueLut(TURB_STOPS, MAX_TURBULENCE, function (t) { return t < 2 ? 0 : Math.min(125, 10 + (t - 2) * 20); });
 
   function WindLayer(map, host) {
     this.map = map;
@@ -235,6 +240,8 @@
       scale = [spec.maxHeight / 255, 2 / 255, 2 / 255]; offset = [0, -1, -1];
     } else if (info.kind === 'period') {
       scale = [spec.maxPeriod / 255, 0, 0]; offset = [0, 0, 0];
+    } else if (info.kind === 'turbulence') {
+      scale = [spec.maxIndex / 255, 0, 0]; offset = [0, 0, 0];
     } else {
       scale = [1 / 255, 1 / 255, 1 / 255]; offset = [0, 0, 0];
     }
@@ -359,6 +366,13 @@
         labels: [{ pos: 0, text: '0%' }, { pos: 1, text: '100% cloud cover' }]
       };
     }
+    if (this.kind === 'turbulence') {
+      for (i = 0; i <= 10; i++) stops.push(rgb(TURB_LUT, Math.round(i / 10 * 16 / MAX_TURBULENCE * 255) * 4));
+      return {
+        gradient: 'linear-gradient(to right,' + stops.join(',') + ')',
+        labels: [{ pos: 4 / 16, text: 'Light' }, { pos: 8 / 16, text: 'Moderate' }, { pos: 12 / 16, text: 'Severe' }]
+      };
+    }
     if (this.kind === 'wave' || this.kind === 'period') {
       var isWave = this.kind === 'wave', table = isWave ? WAVE_LUT : PERIOD_LUT;
       var top = isWave ? 12 : 24, full = isWave ? MAX_WAVE_M : MAX_PERIOD_S;  // legend range, and the texture range
@@ -456,11 +470,12 @@
           var cover = Math.max(0, Math.min(1, out[0]));
           px[o] = CLOUD_RGB[0]; px[o + 1] = CLOUD_RGB[1]; px[o + 2] = CLOUD_RGB[2];
           px[o + 3] = Math.pow(cover, 1.6) * 115;  // thin cloud barely shows, full overcast stays see-through
-        } else if (kind === 'wave' || kind === 'period') {
-          var table = kind === 'wave' ? WAVE_LUT : PERIOD_LUT, top = kind === 'wave' ? MAX_WAVE_M : MAX_PERIOD_S;
+        } else if (kind === 'wave' || kind === 'period' || kind === 'turbulence') {
+          var table = kind === 'wave' ? WAVE_LUT : kind === 'period' ? PERIOD_LUT : TURB_LUT;
+          var top = kind === 'wave' ? MAX_WAVE_M : kind === 'period' ? MAX_PERIOD_S : MAX_TURBULENCE;
           var wi = Math.max(0, Math.min(255, Math.round(out[0] / top * 255))) * 4;
           px[o] = table[wi]; px[o + 1] = table[wi + 1]; px[o + 2] = table[wi + 2];
-          px[o + 3] = table[wi + 3] * mask[o + 3] / 255;  // clip to the sea
+          px[o + 3] = seaOnly ? table[wi + 3] * mask[o + 3] / 255 : table[wi + 3];  // waves are clipped to the sea
         } else if (kind === 'precip') {
           var lut = out[1] > 0.5 ? SNOW_LUT : RAIN_LUT;
           var q = Math.max(0, Math.min(255, Math.round(out[0] * 255))) * 4;

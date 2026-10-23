@@ -218,9 +218,10 @@
       wind: [['surface', 'Surface'], ['850mb', '850 hPa'], ['250mb', '250 hPa · jet']],
       clouds: [['clouds-total', 'Total'], ['clouds-low', 'Low'], ['clouds-mid', 'Mid'], ['clouds-high', 'High']],
       rain: [['precip', 'Rain & snow']],
-      waves: [['waves-height', 'Wave height'], ['waves-swell', 'Swell'], ['waves-period', 'Wave period']]
+      waves: [['waves-height', 'Wave height'], ['waves-swell', 'Swell'], ['waves-period', 'Wave period']],
+      turbulence: [['cat-fl300', 'FL300 · 9.1 km', 'FL300'], ['cat-fl340', 'FL340 · 10.4 km', 'FL340'], ['cat-fl390', 'FL390 · 11.9 km', 'FL390']]
     };
-    var modeLevel = { wind: 'surface', clouds: 'clouds-total', rain: 'precip', waves: 'waves-height' };  // last level chosen per mode
+    var modeLevel = { wind: 'surface', clouds: 'clouds-total', rain: 'precip', waves: 'waves-height', turbulence: 'cat-fl340' };  // last level chosen per mode
     function isFieldMode(m) { return !!FIELD_MODES[m]; }
 
     var fieldSource = {
@@ -265,6 +266,7 @@
     var LEVEL_NAMES = {
       surface: 'Surface (10 m)', '850mb': '850 hPa (~1.5 km)', '250mb': '250 hPa (~10 km)',
       'waves-height': 'Wave height', 'waves-swell': 'Main swell height', 'waves-period': 'Wave period',
+      'cat-fl300': 'Turbulence at FL300', 'cat-fl340': 'Turbulence at FL340', 'cat-fl390': 'Turbulence at FL390',
       'clouds-total': 'Total cloud cover', 'clouds-low': 'Low clouds', 'clouds-mid': 'Mid-level clouds', 'clouds-high': 'High clouds'
     };
 
@@ -306,6 +308,11 @@
           $('readoutArrow').style.transform = 'rotate(' + heading + 'deg)';
           $('readoutDir').textContent = (isSea ? 'from ' + COMPASS[Math.round(cameFrom / 22.5) % 16] + ' · ' : 'Land · ') +
             LEVEL_NAMES[wind.level] + ' · ' + when;
+        } else if (wind.kind === 'turbulence') {
+          var ti = v.u;  // Ellrod index, 1e-7 s^-2
+          var grade = ti < 4 ? 'Smooth' : ti < 8 ? 'Light' : ti < 12 ? 'Moderate' : 'Severe';
+          $('readoutSpeed').textContent = grade;
+          $('readoutDir').textContent = LEVEL_NAMES[wind.level] + ' · index ' + ti.toFixed(1) + ' · ' + when;
         } else if (wind.kind === 'period') {
           $('readoutSpeed').textContent = v.u < 0.5 ? 'No wave data' : v.u.toFixed(1) + ' s';
           $('readoutDir').textContent = 'Time between waves · ' + when;
@@ -337,6 +344,7 @@
       { mode: 'clouds', icon: '☁️', title: 'Clouds', items: FIELD_MODES.clouds },
       { mode: 'rain', icon: '🌧️', title: 'Rain & snow', items: [['precip', 'Forecast, next 5 days']] },
       { mode: 'waves', icon: '🌊', title: 'Waves', items: FIELD_MODES.waves },
+      { mode: 'turbulence', icon: '✈️', title: 'Turbulence', items: FIELD_MODES.turbulence },
       { mode: 'radar', icon: '📡', title: 'Radar', items: [['radar', 'Observed rain, past 2 hours']] }
     ];
 
@@ -356,6 +364,7 @@
           b.className = 'item';
           b.dataset.mode = group.mode;
           b.dataset.level = item[0];
+          b.dataset.short = item[2] || item[1];  // shorter name for the top bar
           b.textContent = item[1];
           b.addEventListener('click', function () { selectLayer(group.mode, item[0]); });
           sheet.appendChild(b);
@@ -380,7 +389,7 @@
         b.classList.toggle('on', on);
         if (on) {
           var group = MENU.filter(function (g) { return g.mode === mode; })[0];
-          label = group.items.length > 1 ? group.title + ' · ' + b.textContent : group.title;
+          label = group.items.length > 1 ? group.title + ' · ' + b.dataset.short : group.title;
         }
       });
       $('layerName').textContent = label;
