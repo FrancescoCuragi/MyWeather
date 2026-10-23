@@ -13,6 +13,8 @@ Layers written (each a folder of one PNG per forecast step, plus a shared meta.j
         0..255 = -1..1
     waves-period
         grayscale, 0..255 = 0..30 s
+    cat-fl300, cat-fl340, cat-fl390   (clear-air turbulence, Ellrod index; see turbulence.py)
+        grayscale, 0..255 = 0..20 (1e-7 s^-2); about 4 is light, 8 moderate, 12 severe
 
 Output layout (published as-is to GitHub Pages):  out/fields/meta.json, out/fields/<layer>/f<step>.png
 """
@@ -29,6 +31,7 @@ import numpy as np
 from PIL import Image
 
 import gfs
+import turbulence
 
 DEFAULT_STEPS = list(range(0, 121, 3))
 WORKERS = 8
@@ -60,6 +63,14 @@ def encode_precip(prate: np.ndarray, snow: np.ndarray) -> Image.Image:
 
 MAX_WAVE_M = 16.0
 MAX_PERIOD_S = 30.0
+MAX_TURBULENCE = 20.0   # Ellrod index (1e-7 s^-2) at the top of the texture range
+TURBULENCE_DOWNSAMPLE = 2
+
+
+def encode_turbulence(index: np.ndarray) -> Image.Image:
+    index = index[::TURBULENCE_DOWNSAMPLE, ::TURBULENCE_DOWNSAMPLE]
+    gray = np.clip(np.rint(index / MAX_TURBULENCE * 255.0), 0, 255).astype(np.uint8)
+    return Image.fromarray(gray, "L")
 
 
 def encode_wave(height: np.ndarray, direction_from: np.ndarray) -> Image.Image:
@@ -118,6 +129,16 @@ def build_step(run: dt.datetime, step: int, out_dir: Path, work_dir: Path) -> in
     save("waves-swell", encode_wave(wave_field("SWELL", "1 in sequence", "swell"),
                                     wave_field("SWDIR", "1 in sequence", "swelldir")))
 
+    winds = {
+        pressure: (
+            gfs.fetch_field(url, index, "UGRD", f"{pressure} mb", tmp / f"u{pressure}.grib2"),
+            gfs.fetch_field(url, index, "VGRD", f"{pressure} mb", tmp / f"v{pressure}.grib2"),
+        )
+        for pressure in turbulence.PRESSURES
+    }
+    for flight_level in turbulence.FLIGHT_LEVELS:
+        save(f"cat-{flight_level}", encode_turbulence(turbulence.ellrod(winds, flight_level)))
+
     shutil.rmtree(tmp, ignore_errors=True)
     return total
 
@@ -149,6 +170,8 @@ def main() -> None:
     layers["waves-height"] = {"kind": "wave", "maxHeight": MAX_WAVE_M}
     layers["waves-swell"] = {"kind": "wave", "maxHeight": MAX_WAVE_M}
     layers["waves-period"] = {"kind": "period", "maxPeriod": MAX_PERIOD_S}
+    for flight_level in turbulence.FLIGHT_LEVELS:
+        layers[f"cat-{flight_level}"] = {"kind": "turbulence", "maxIndex": MAX_TURBULENCE}
     meta = {
         "run": run.strftime("%Y-%m-%dT%H:00:00Z"),
         "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
