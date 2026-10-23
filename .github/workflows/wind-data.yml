@@ -1,4 +1,4 @@
-name: Build wind data
+name: Build weather data
 
 # GFS runs at 00/06/12/18 UTC and is fully published about 5 hours later; run a little after that.
 on:
@@ -31,6 +31,9 @@ jobs:
       - name: Build wind textures
         working-directory: pipeline
         run: python build_wind.py --out ../site/wind
+      - name: Build cloud and precipitation textures
+        working-directory: pipeline
+        run: python build_fields.py --out ../site/fields
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
