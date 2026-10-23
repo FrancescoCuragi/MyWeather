@@ -5,28 +5,60 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <link rel="stylesheet" href="maplibre-gl.css">
   <style>
-    html, body { margin: 0; background: #0f1420; }
+    html, body { margin: 0; background: #0f1420; font: 14px/1.2 sans-serif; color: #e6e8f0; }
     /* Fixed positioning, so layout never depends on the page having a resolved height. */
     #map { position: fixed; top: 0; right: 0; bottom: 0; left: 0; }
+    #overlay { position: absolute; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; }
+
+    .bar { position: fixed; z-index: 2; display: flex; align-items: center; gap: 8px; }
+    #chips { top: 12px; left: 12px; right: 64px; flex-direction: column; align-items: flex-start; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chip {
+      border: 0; border-radius: 18px; padding: 8px 14px; font: inherit; color: #e6e8f0;
+      background: rgba(30, 34, 48, 0.88);
+    }
+    .chip.on { background: #4a4f7a; color: #fff; }
+
+    #legend {
+      position: fixed; z-index: 2; left: 12px; right: 12px; bottom: 84px;
+      padding: 6px 14px 4px; border-radius: 16px; background: rgba(30, 34, 48, 0.88);
+    }
+    #legend .gradient { height: 8px; border-radius: 4px; }
+    #legend .labels { display: flex; justify-content: space-between; font-size: 11px; margin-top: 3px; }
+
     #controls {
       position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 2;
       display: flex; align-items: center; gap: 12px;
-      padding: 10px 14px; border-radius: 28px;
-      background: rgba(30, 34, 48, 0.88); color: #e6e8f0;
-      font: 14px/1.2 sans-serif;
+      padding: 10px 14px; border-radius: 28px; background: rgba(30, 34, 48, 0.88);
     }
-    #play {
-      width: 40px; height: 40px; border-radius: 20px; border: 0; flex: none;
-      background: #4a4f7a; color: #fff; font-size: 16px;
-    }
+    #play { width: 40px; height: 40px; border-radius: 20px; border: 0; flex: none; background: #4a4f7a; color: #fff; font-size: 16px; }
     #slider { flex: 1; min-width: 0; }
-    #time { flex: none; min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
-    #status { position: fixed; z-index: 2; top: 12px; left: 12px; right: 12px; text-align: center; color: #e6e8f0; font: 13px sans-serif; }
+    #time { flex: none; min-width: 78px; text-align: right; font-variant-numeric: tabular-nums; }
+    #status { position: fixed; z-index: 2; top: 120px; left: 12px; right: 12px; text-align: center; font-size: 13px; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div id="status"></div>
+
+  <div id="chips" class="bar">
+    <div class="row" id="layerChips">
+      <button class="chip" data-mode="wind">Wind</button>
+      <button class="chip" data-mode="radar">Radar</button>
+    </div>
+    <div class="row" id="levelChips">
+      <button class="chip" data-level="surface">Surface</button>
+      <button class="chip" data-level="850mb">850 hPa</button>
+      <button class="chip" data-level="250mb">250 hPa · jet</button>
+    </div>
+  </div>
+
+  <div id="legend" hidden>
+    <div class="gradient" id="legendGradient"></div>
+    <div class="labels"><span>0</span><span id="legendMax"></span></div>
+  </div>
+
   <div id="controls" hidden>
     <button id="play" aria-label="Play or pause">⏸</button>
     <input id="slider" type="range" min="0" max="0" value="0">
@@ -34,11 +66,11 @@
   </div>
 
   <script src="maplibre-gl.js"></script>
+  <script src="wind.js"></script>
   <script>
     // Kotlin side (see MapScreen.kt) exposes `Android.onMapTap(lat, lon)`; absent when opened in a desktop browser.
     var RAINVIEWER_API = 'https://api.rainviewer.com/public/weather-maps.json';
     var RADAR_MAX_ZOOM = 7;       // RainViewer free tiles stop at zoom 7; MapLibre over-scales beyond it
-    var FRAME_MS = 600;
     var RADAR_OPACITY = 0.7;
 
     var map = new maplibregl.Map({
@@ -48,54 +80,80 @@
       zoom: 5,
       attributionControl: false
     });
-    // Top-right so the attribution never sits under the radar controls.
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'top-right');
+    // Top-right so the attribution never sits under the controls.
+    map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Wind: NOAA GFS' }), 'top-right');
 
-    var marker = null;
-    var frames = [];     // [{time, layerId}]
-    var current = 0;
-    var playing = true;
-    var timer = null;
-
-    var playBtn = document.getElementById('play');
-    var slider = document.getElementById('slider');
-    var timeLabel = document.getElementById('time');
-    var statusLabel = document.getElementById('status');
-
+    var $ = function (id) { return document.getElementById(id); };
+    var statusLabel = $('status'), slider = $('slider'), playBtn = $('play'), timeLabel = $('time');
     function setStatus(text) { statusLabel.textContent = text || ''; }
 
-    function showFrame(index) {
-      if (!frames.length) return;
-      current = (index + frames.length) % frames.length;
-      frames.forEach(function (f, i) {
-        map.setPaintProperty(f.layerId, 'raster-opacity', i === current ? RADAR_OPACITY : 0);
-      });
-      slider.value = current;
-      timeLabel.textContent = new Date(frames[current].time * 1000)
-        .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    var marker = null;
+    var mode = 'wind';
+    var wind = null;              // WindLayer, created once the map has loaded
+    var radar = { frames: [], loaded: false };
+
+    /* ---------------- timeline: one slider/play loop shared by radar and wind ---------------- */
+    /* A source provides { count, label(i), show(i) -> Promise|void, delayMs(i) } and its starting index. */
+
+    var timeline = { source: null, index: 0, playing: true, timer: null };
+
+    function showIndex(i) {
+      var src = timeline.source;
+      if (!src) return Promise.resolve();
+      timeline.index = ((i % src.count) + src.count) % src.count;
+      slider.value = timeline.index;
+      timeLabel.textContent = src.label(timeline.index);
+      return Promise.resolve(src.show(timeline.index));
     }
 
-    function tick() {
-      // Pause briefly on the newest frame so the loop reads as "now".
-      var next = current + 1;
-      showFrame(next);
-      timer = setTimeout(tick, next === frames.length - 1 ? FRAME_MS * 3 : FRAME_MS);
+    function scheduleNext() {
+      clearTimeout(timeline.timer);
+      var src = timeline.source;
+      if (!timeline.playing || !src) return;
+      timeline.timer = setTimeout(function () {
+        // Wait for the frame to be ready before scheduling the next, so playback never outruns downloads.
+        showIndex(timeline.index + 1).then(scheduleNext, scheduleNext);
+      }, src.delayMs(timeline.index));
     }
 
     function setPlaying(value) {
-      playing = value;
-      playBtn.textContent = playing ? '⏸' : '▶';
-      clearTimeout(timer);
-      if (playing && frames.length) timer = setTimeout(tick, FRAME_MS);
+      timeline.playing = value;
+      playBtn.textContent = value ? '⏸' : '▶';
+      value ? scheduleNext() : clearTimeout(timeline.timer);
     }
 
+    function useSource(src, startIndex) {
+      clearTimeout(timeline.timer);
+      timeline.source = src;
+      slider.max = src.count - 1;
+      $('controls').hidden = false;
+      showIndex(startIndex).then(scheduleNext, scheduleNext);
+    }
+
+    playBtn.addEventListener('click', function () { setPlaying(!timeline.playing); });
+    slider.addEventListener('input', function () { setPlaying(false); showIndex(Number(slider.value)); });
+
+    /* ---------------- radar ---------------- */
+
+    var radarSource = {
+      get count() { return radar.frames.length; },
+      label: function (i) {
+        return new Date(radar.frames[i].time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      },
+      show: function (i) {
+        radar.frames.forEach(function (f, k) {
+          map.setPaintProperty(f.layerId, 'raster-opacity', k === i ? RADAR_OPACITY : 0);
+        });
+      },
+      // Pause briefly on the newest frame so the loop reads as "now".
+      delayMs: function (i) { return i === radar.frames.length - 1 ? 1800 : 600; }
+    };
+
     function loadRadar() {
-      setStatus('Loading radar…');
-      fetch(RAINVIEWER_API)
+      return fetch(RAINVIEWER_API)
         .then(function (r) { return r.json(); })
         .then(function (data) {
-          var past = (data.radar && data.radar.past) || [];
-          past.forEach(function (frame, i) {
+          ((data.radar && data.radar.past) || []).forEach(function (frame, i) {
             var id = 'radar-' + i;
             map.addSource(id, {
               type: 'raster',
@@ -106,28 +164,99 @@
             });
             map.addLayer({
               id: id, type: 'raster', source: id,
+              layout: { visibility: 'none' },
               paint: { 'raster-opacity': 0, 'raster-fade-duration': 0 }
             });
-            frames.push({ time: frame.time, layerId: id });
+            radar.frames.push({ time: frame.time, layerId: id });
           });
-          if (!frames.length) { setStatus('No radar data available'); return; }
-          setStatus('');
-          slider.max = frames.length - 1;
-          document.getElementById('controls').hidden = false;
-          showFrame(frames.length - 1);
-          setPlaying(true);
-        })
-        .catch(function () { setStatus('Could not load radar'); });
+          radar.loaded = true;
+        });
     }
 
-    playBtn.addEventListener('click', function () { setPlaying(!playing); });
-    slider.addEventListener('input', function () { setPlaying(false); showFrame(Number(slider.value)); });
+    function setRadarVisible(visible) {
+      radar.frames.forEach(function (f) {
+        map.setLayoutProperty(f.layerId, 'visibility', visible ? 'visible' : 'none');
+      });
+    }
+
+    /* ---------------- wind ---------------- */
+
+    var windSource = {
+      get count() { return wind.meta.steps.length; },
+      label: function (i) {
+        var d = new Date(wind.timeOf(i));
+        return d.toLocaleDateString([], { weekday: 'short' }) + ' ' +
+          d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      },
+      show: function (i) {
+        wind.prefetch(i + 1); wind.prefetch(i + 2);
+        return wind.setStep(i);
+      },
+      delayMs: function () { return 700; }
+    };
+
+    function updateLegend() {
+      var l = wind.legend();
+      $('legendGradient').style.background = l.gradient;
+      $('legendMax').textContent = l.max + '+ m/s';
+    }
+
+    /* ---------------- modes and chips ---------------- */
+
+    function markChips() {
+      document.querySelectorAll('[data-mode]').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === mode); });
+      document.querySelectorAll('[data-level]').forEach(function (b) { b.classList.toggle('on', wind && b.dataset.level === wind.level); });
+      $('levelChips').hidden = mode !== 'wind';
+      $('legend').hidden = mode !== 'wind';
+    }
+
+    function setMode(next) {
+      mode = next;
+      setStatus('');
+      if (mode === 'wind') {
+        setRadarVisible(false);
+        wind.show();
+        updateLegend();
+        wind.loadMeta().then(function () {
+          if (mode !== 'wind') return;
+          useSource(windSource, wind.nowIndex());
+        }).catch(function () { setStatus('Could not load wind data'); });
+      } else {
+        wind.hide();
+        if (!radar.loaded) { setStatus('Loading radar…'); }
+        var ready = radar.loaded ? Promise.resolve() : loadRadar();
+        ready.then(function () {
+          if (mode !== 'radar') return;
+          setStatus(radar.frames.length ? '' : 'No radar data available');
+          if (!radar.frames.length) return;
+          setRadarVisible(true);
+          useSource(radarSource, radar.frames.length - 1);
+        }).catch(function () { setStatus('Could not load radar'); });
+      }
+      markChips();
+    }
+
+    document.querySelectorAll('[data-mode]').forEach(function (b) {
+      b.addEventListener('click', function () { if (b.dataset.mode !== mode) setMode(b.dataset.mode); });
+    });
+    document.querySelectorAll('[data-level]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        wind.level = b.dataset.level;
+        updateLegend(); markChips();
+        wind.setStep(timeline.index);
+      });
+    });
 
     map.on('load', function () {
       // Start with the attribution collapsed to its (i) button; it expands when tapped.
       var attrib = document.querySelector('.maplibregl-ctrl-attrib');
       if (attrib) { attrib.classList.remove('maplibregl-compact-show'); attrib.removeAttribute('open'); }
-      loadRadar();
+
+      var host = document.createElement('div');
+      host.id = 'overlay';
+      map.getContainer().appendChild(host);
+      wind = new WindLayer(map, host);
+      setMode('wind');
     });
 
     map.on('click', function (e) {
