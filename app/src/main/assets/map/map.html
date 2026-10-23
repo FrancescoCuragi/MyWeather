@@ -24,7 +24,8 @@
       padding: 6px 14px 4px; border-radius: 16px; background: rgba(30, 34, 48, 0.88);
     }
     #legend .gradient { height: 8px; border-radius: 4px; }
-    #legend .labels { display: flex; justify-content: space-between; font-size: 11px; margin-top: 3px; }
+    #legend .labels { position: relative; height: 16px; font-size: 11px; margin-top: 3px; }
+    #legend .labels span { position: absolute; white-space: nowrap; }
 
     #controls {
       position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 2;
@@ -53,13 +54,11 @@
   <div id="chips" class="bar">
     <div class="row" id="layerChips">
       <button class="chip" data-mode="wind">Wind</button>
+      <button class="chip" data-mode="clouds">Clouds</button>
+      <button class="chip" data-mode="rain">Rain</button>
       <button class="chip" data-mode="radar">Radar</button>
     </div>
-    <div class="row" id="levelChips">
-      <button class="chip" data-level="surface">Surface</button>
-      <button class="chip" data-level="850mb">850 hPa</button>
-      <button class="chip" data-level="250mb">250 hPa · jet</button>
-    </div>
+    <div class="row" id="levelChips"></div>
   </div>
 
   <div id="readout" hidden>
@@ -71,7 +70,7 @@
 
   <div id="legend" hidden>
     <div class="gradient" id="legendGradient"></div>
-    <div class="labels"><span>0</span><span id="legendMax"></span></div>
+    <div class="labels" id="legendLabels"></div>
   </div>
 
   <div id="controls" hidden>
@@ -96,7 +95,7 @@
       attributionControl: false
     });
     // Top-right so the attribution never sits under the controls.
-    map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Wind: NOAA GFS' }), 'top-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Weather: NOAA GFS' }), 'top-right');
 
     var $ = function (id) { return document.getElementById(id); };
     var statusLabel = $('status'), slider = $('slider'), playBtn = $('play'), timeLabel = $('time');
@@ -194,9 +193,18 @@
       });
     }
 
-    /* ---------------- wind ---------------- */
+    /* ---------------- field layers: wind, clouds, rain ---------------- */
 
-    var windSource = {
+    // Each mode that draws from the weather textures: its level chips as [texture folder, label].
+    var FIELD_MODES = {
+      wind: [['surface', 'Surface'], ['850mb', '850 hPa'], ['250mb', '250 hPa · jet']],
+      clouds: [['clouds-total', 'Total'], ['clouds-low', 'Low'], ['clouds-mid', 'Mid'], ['clouds-high', 'High']],
+      rain: [['precip', 'Rain & snow']]
+    };
+    var modeLevel = { wind: 'surface', clouds: 'clouds-total', rain: 'precip' };  // last level chosen per mode
+    function isFieldMode(m) { return !!FIELD_MODES[m]; }
+
+    var fieldSource = {
       get count() { return wind.hourCount(); },
       label: function (i) {
         var d = new Date(wind.timeOf(i));
@@ -210,10 +218,23 @@
       delayMs: function () { return 400; }
     };
 
+    /** Wall-clock time the timeline is showing, or null when it is not showing a field layer. */
+    function currentTimeMs() {
+      return timeline.source === fieldSource && wind && wind.meta ? wind.timeOf(timeline.index) : null;
+    }
+
     function updateLegend() {
       var l = wind.legend();
       $('legendGradient').style.background = l.gradient;
-      $('legendMax').textContent = l.max + '+ m/s';
+      var box = $('legendLabels');
+      box.innerHTML = '';
+      l.labels.forEach(function (label) {
+        var span = document.createElement('span');
+        span.textContent = label.text;
+        span.style.left = (label.pos * 100) + '%';
+        span.style.transform = label.pos <= 0 ? 'none' : label.pos >= 1 ? 'translateX(-100%)' : 'translateX(-50%)';
+        box.appendChild(span);
+      });
     }
 
     /* ---------------- tap readout ---------------- */
@@ -222,7 +243,10 @@
     var windUnit = 'KmH';         // set by the app from the user's settings (see MapScreen.kt)
     var BEAUFORT_KMH = [1, 5, 11, 19, 28, 38, 49, 61, 74, 88, 102, 117];
     var COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-    var LEVEL_NAMES = { surface: 'Surface (10 m)', '850mb': '850 hPa (~1.5 km)', '250mb': '250 hPa (~10 km)' };
+    var LEVEL_NAMES = {
+      surface: 'Surface (10 m)', '850mb': '850 hPa (~1.5 km)', '250mb': '250 hPa (~10 km)',
+      'clouds-total': 'Total cloud cover', 'clouds-low': 'Low clouds', 'clouds-mid': 'Mid-level clouds', 'clouds-high': 'High clouds'
+    };
 
     function formatSpeed(ms) {
       var kmh = ms * 3.6;
@@ -240,16 +264,26 @@
       var box = $('readout');
       if (!tapPoint) { box.hidden = true; return; }
       box.hidden = false;
-      var w = mode === 'wind' && wind ? wind.windAt(tapPoint.lon, tapPoint.lat) : null;
-      $('readoutWind').hidden = !w;
-      if (w) {
-        var speed = Math.sqrt(w.u * w.u + w.v * w.v);
-        // Meteorological direction is where the wind comes FROM; the arrow points where it blows TO.
-        var from = (Math.atan2(-w.u, -w.v) * 180 / Math.PI + 360) % 360;
-        $('readoutSpeed').textContent = formatSpeed(speed);
-        $('readoutArrow').style.transform = 'rotate(' + (from + 180) + 'deg)';
-        $('readoutDir').textContent = 'from ' + COMPASS[Math.round(from / 22.5) % 16] + ' · ' + LEVEL_NAMES[wind.level] +
-          ' · ' + timeLabel.textContent;
+      var v = isFieldMode(mode) && wind ? wind.windAt(tapPoint.lon, tapPoint.lat) : null;
+      $('readoutWind').hidden = !v;
+      if (v) {
+        var when = timeLabel.textContent;
+        $('readoutArrow').hidden = wind.kind !== 'wind';
+        if (wind.kind === 'wind') {
+          var speed = Math.sqrt(v.u * v.u + v.v * v.v);
+          // Meteorological direction is where the wind comes FROM; the arrow points where it blows TO.
+          var from = (Math.atan2(-v.u, -v.v) * 180 / Math.PI + 360) % 360;
+          $('readoutSpeed').textContent = formatSpeed(speed);
+          $('readoutArrow').style.transform = 'rotate(' + (from + 180) + 'deg)';
+          $('readoutDir').textContent = 'from ' + COMPASS[Math.round(from / 22.5) % 16] + ' · ' + LEVEL_NAMES[wind.level] + ' · ' + when;
+        } else if (wind.kind === 'cloud') {
+          $('readoutSpeed').textContent = Math.round(Math.max(0, Math.min(1, v.u)) * 100) + '% cloud';
+          $('readoutDir').textContent = LEVEL_NAMES[wind.level] + ' · ' + when;
+        } else {
+          var rate = v.u * v.u * 50;  // the texture stores sqrt(rate / 50 mm/h)
+          $('readoutSpeed').textContent = rate < 0.05 ? 'No precipitation' : (rate < 10 ? rate.toFixed(1) : Math.round(rate)) + ' mm/h';
+          $('readoutDir').textContent = (rate < 0.05 ? '' : (v.v > 0.5 ? 'Snow · ' : 'Rain · ')) + when;
+        }
       }
       $('readoutPlace').textContent = tapPoint.lat.toFixed(3) + ', ' + tapPoint.lon.toFixed(3);
     }
@@ -266,22 +300,49 @@
 
     function markChips() {
       document.querySelectorAll('[data-mode]').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === mode); });
-      document.querySelectorAll('[data-level]').forEach(function (b) { b.classList.toggle('on', wind && b.dataset.level === wind.level); });
-      $('levelChips').hidden = mode !== 'wind';
-      $('legend').hidden = mode !== 'wind';
+      document.querySelectorAll('[data-level]').forEach(function (b) { b.classList.toggle('on', b.dataset.level === modeLevel[mode]); });
+      $('legend').hidden = !isFieldMode(mode);
+    }
+
+    function buildLevelChips() {
+      var row = $('levelChips'), levels = FIELD_MODES[mode] || [];
+      row.innerHTML = '';
+      levels.forEach(function (l) {
+        var b = document.createElement('button');
+        b.className = 'chip';
+        b.dataset.level = l[0];
+        b.textContent = l[1];
+        b.addEventListener('click', function () { chooseLevel(l[0]); });
+        row.appendChild(b);
+      });
+      row.hidden = levels.length < 2;  // a lone level needs no picker
+    }
+
+    /** Shows a texture layer at the time the timeline is on (or now, when coming from elsewhere). */
+    function showLevel(level, timeMs) {
+      var requestedMode = mode;
+      return wind.useLevel(level).then(function () {
+        if (mode !== requestedMode) return;  // the user already moved on
+        updateLegend();
+        useSource(fieldSource, timeMs === null ? wind.nowIndex() : wind.indexForTime(timeMs));
+      }).catch(function () { setStatus('Could not load weather data'); });
+    }
+
+    function chooseLevel(level) {
+      modeLevel[mode] = level;
+      markChips();
+      showLevel(level, currentTimeMs());
     }
 
     function setMode(next) {
+      var timeMs = currentTimeMs();  // read before anything changes, so the chosen time carries over
       mode = next;
       setStatus('');
-      if (mode === 'wind') {
+      buildLevelChips();
+      if (isFieldMode(mode)) {
         setRadarVisible(false);
         wind.show();
-        updateLegend();
-        wind.loadMeta().then(function () {
-          if (mode !== 'wind') return;
-          useSource(windSource, wind.nowIndex());
-        }).catch(function () { setStatus('Could not load wind data'); });
+        showLevel(modeLevel[mode], timeMs);
       } else {
         wind.hide();
         if (!radar.loaded) { setStatus('Loading radar…'); }
@@ -300,13 +361,6 @@
 
     document.querySelectorAll('[data-mode]').forEach(function (b) {
       b.addEventListener('click', function () { if (b.dataset.mode !== mode) setMode(b.dataset.mode); });
-    });
-    document.querySelectorAll('[data-level]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        wind.level = b.dataset.level;
-        updateLegend(); markChips();
-        wind.setStep(timeline.index).then(updateReadout);
-      });
     });
 
     map.on('load', function () {

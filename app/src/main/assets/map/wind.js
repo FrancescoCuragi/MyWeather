@@ -1,13 +1,25 @@
 /*
- * Wind layer for the MyWeather map: speed colours plus animated particles, drawn on two canvases laid over the
- * MapLibre map. Wind comes from PNG textures published by the data pipeline (see pipeline/build_wind.py):
- * red = eastward wind (u), green = northward wind (v), scaled from [-maxSpeed, +maxSpeed] m/s to 0..255,
- * on a 0.5 degree grid with longitude 0..360 and latitude 90..-90.
+ * Weather field layers for the MyWeather map, drawn on canvases laid over the MapLibre map: wind (speed colours
+ * plus animated particles), cloud cover and precipitation. The data comes from PNG textures published by the
+ * pipeline (see pipeline/build_wind.py and pipeline/build_fields.py), on a regular grid with longitude 0..360
+ * and latitude 90..-90:
+ *   wind    red = eastward wind (u), green = northward wind (v), scaled from [-maxSpeed, +maxSpeed] m/s to 0..255
+ *   cloud   grayscale, 0..255 = 0..100 % cover
+ *   precip  red = sqrt(rain rate / 50 mm/h) * 255, green = snow fraction * 255
  */
 (function () {
   'use strict';
 
-  var BASE_URL = 'https://francescocuragi.github.io/MyWeather/wind/';
+  var SITE = 'https://francescocuragi.github.io/MyWeather/';
+  var CLOUD_RGB = [236, 242, 252];
+  var MAX_RAIN_RATE = 50;       // mm/h at the top of the precip texture range
+
+  /** Which published folder and which kind of data each layer name (the texture subfolder) uses. */
+  function layerInfo(level) {
+    if (level.indexOf('clouds-') === 0) return { base: 'fields', kind: 'cloud' };
+    if (level === 'precip') return { base: 'fields', kind: 'precip' };
+    return { base: 'wind', kind: 'wind' };
+  }
   var CELL = 4;                 // heatmap resolution: one sample per CELL x CELL css pixels
   var PIXELS_PER_MS = 0.03;     // particle speed: css pixels moved per frame per m/s of wind
   var MAX_AGE = 90;             // frames before a particle respawns
@@ -34,11 +46,32 @@
   }
   var LUT = buildLut();
 
+  // Precipitation colours by rain rate in mm/h; alpha is added per pixel in buildPrecipLut.
+  var RAIN_STOPS = [[0.1, 110, 180, 255], [0.5, 60, 130, 255], [2, 40, 200, 130], [5, 250, 230, 60], [15, 250, 130, 40], [50, 220, 40, 170]];
+  var SNOW_STOPS = [[0.1, 200, 225, 255], [2, 225, 240, 255], [10, 255, 255, 255], [50, 215, 190, 255]];
+
+  function buildPrecipLut(stops) {
+    var lut = new Uint8ClampedArray(256 * 4);
+    for (var i = 0; i < 256; i++) {
+      var rate = Math.pow(i / 255, 2) * MAX_RAIN_RATE, s = 1;
+      while (s < stops.length - 1 && stops[s][0] < rate) s++;
+      var a = stops[s - 1], b = stops[s], t = Math.max(0, Math.min(1, (rate - a[0]) / (b[0] - a[0])));
+      for (var c = 0; c < 3; c++) lut[i * 4 + c] = a[c + 1] + (b[c + 1] - a[c + 1]) * t;
+      // Opacity grows smoothly from nothing at ~0.02 mm/h to strong at ~1.5 mm/h, so edges stay soft.
+      lut[i * 4 + 3] = 200 * Math.sqrt(Math.max(0, Math.min(1, (rate - 0.02) / 1.5)));
+    }
+    return lut;
+  }
+  var RAIN_LUT = buildPrecipLut(RAIN_STOPS), SNOW_LUT = buildPrecipLut(SNOW_STOPS);
+
   function WindLayer(map, host) {
     this.map = map;
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.meta = null;
+    this.metas = {};            // base folder -> loaded meta.json
+    this.metaPromises = {};
     this.level = 'surface';
+    this.kind = 'wind';
     this.step = 0;
     this.frame = null;          // decoded texture currently shown
     this.cache = {};            // "level/step" -> promise of decoded frame
@@ -84,15 +117,42 @@
 
   /* ---- data ---- */
 
-  WindLayer.prototype.loadMeta = function () {
+  WindLayer.prototype.loadMeta = function (base) {
     var self = this;
-    if (!this.metaPromise) {
-      this.metaPromise = fetch(BASE_URL + 'meta.json', { cache: 'no-cache' })
+    if (!this.metaPromises[base]) {
+      this.metaPromises[base] = fetch(SITE + base + '/meta.json', { cache: 'no-cache' })
         .then(function (r) { if (!r.ok) throw new Error('meta ' + r.status); return r.json(); })
-        .then(function (m) { self.meta = m; return m; });
-      this.metaPromise.catch(function () { self.metaPromise = null; });
+        .then(function (m) { self.metas[base] = m; return m; });
+      this.metaPromises[base].catch(function () { delete self.metaPromises[base]; });
     }
-    return this.metaPromise;
+    return this.metaPromises[base];
+  };
+
+  /** Switches to another layer (a texture subfolder name): loads its meta and resets what is drawn. */
+  WindLayer.prototype.useLevel = function (level) {
+    var info = layerInfo(level), self = this;
+    return this.loadMeta(info.base).then(function (meta) {
+      self.level = level;
+      self.kind = info.kind;
+      self.base = info.base;
+      self.meta = meta;
+      self.requested++;          // drop any frame still loading for the previous layer
+      self.frame = null;
+      self.hctx.clearRect(0, 0, self.heat.width, self.heat.height);
+      self.pctx.clearRect(0, 0, self.w, self.h);
+      self.applyKind();
+    });
+  };
+
+  /** Particles only make sense for wind; the other layers are colour fields. */
+  WindLayer.prototype.applyKind = function () {
+    this.parts.style.display = this.active && this.kind === 'wind' ? 'block' : 'none';
+  };
+
+  /** Timeline hour closest to a wall-clock time (ms), within the loaded forecast. */
+  WindLayer.prototype.indexForTime = function (ms) {
+    var hours = Math.round((ms - Date.parse(this.meta.run)) / 3600000) - this.meta.steps[0];
+    return Math.max(0, Math.min(this.hourCount() - 1, hours));
   };
 
   /*
@@ -127,8 +187,11 @@
     var key = level + '/' + index;
     if (this.cache[key]) return this.cache[key];
     var step = this.meta.steps[index];
-    var url = BASE_URL + level + '/f' + ('00' + step).slice(-3) + '.png';
-    var maxSpeed = this.meta.levels[level].maxSpeed;
+    var info = layerInfo(level);
+    var url = SITE + info.base + '/' + level + '/f' + ('00' + step).slice(-3) + '.png';
+    // sample() turns a channel byte b into b * scale + offset: m/s for wind, 0..1 for the other layers.
+    var maxSpeed = info.kind === 'wind' ? this.meta.levels[level].maxSpeed : null;
+    var scale = maxSpeed ? 2 * maxSpeed / 255 : 1 / 255, offset = maxSpeed ? -maxSpeed : 0;
     var promise = new Promise(function (resolve, reject) {
       var img = new Image();
       img.crossOrigin = 'anonymous';
@@ -137,7 +200,7 @@
         c.width = img.width; c.height = img.height;
         var ctx = c.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(img, 0, 0);
-        resolve({ data: ctx.getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height, max: maxSpeed });
+        resolve({ data: ctx.getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height, scale: scale, offset: offset });
       };
       img.onerror = function () { reject(new Error('wind frame ' + url)); };
       img.src = url;
@@ -162,7 +225,10 @@
     return true;
   };
 
-  /** Wind (m/s) at a point for the frame on screen, or null when nothing is loaded or the point is off the grid. */
+  /**
+   * Raw values at a point for the frame on screen, or null when nothing is loaded or the point is off the grid:
+   * {u, v} in m/s for wind; {u: cloud 0..1} for clouds; {u: rain rate 0..1 (sqrt-encoded), v: snow fraction}.
+   */
   WindLayer.prototype.windAt = function (lon, lat) {
     var out = [0, 0];
     return this.frame && this.sampleWind(this.frame, lon, lat, out) ? { u: out[0], v: out[1] } : null;
@@ -179,11 +245,11 @@
     x0 = x0 % f.w;
     var d = f.data, w = f.w;
     var i00 = (y0 * w + x0) * 4, i10 = (y0 * w + x1) * 4, i01 = (y1 * w + x0) * 4, i11 = (y1 * w + x1) * 4;
-    var scale = 2 * f.max / 255;
+    var scale = f.scale, offset = f.offset;
     for (var c = 0; c < 2; c++) {
       var top = d[i00 + c] * (1 - tx) + d[i10 + c] * tx;
       var bottom = d[i01 + c] * (1 - tx) + d[i11 + c] * tx;
-      out[c] = (top * (1 - ty) + bottom * ty) * scale - f.max;
+      out[c] = (top * (1 - ty) + bottom * ty) * scale + offset;
     }
     return true;
   };
@@ -216,7 +282,8 @@
   WindLayer.prototype.show = function () {
     if (this.active) return;
     this.active = true;
-    this.heat.style.display = this.parts.style.display = 'block';
+    this.heat.style.display = 'block';
+    this.applyKind();
     var m = this.map;
     m.on('movestart', this.onMoveStart); m.on('move', this.onMove);
     m.on('moveend', this.onMoveEnd); m.on('resize', this.onResize);
@@ -234,14 +301,29 @@
     cancelAnimationFrame(this.raf);
   };
 
+  /** Legend for the current layer: a CSS gradient plus labels placed at positions 0..1 along it. */
   WindLayer.prototype.legend = function () {
-    var max = COLOR_MAX[this.level];
-    var stops = [];
-    for (var i = 0; i <= 10; i++) {
-      var k = Math.round(i / 10 * 255) * 4;
-      stops.push('rgb(' + LUT[k] + ',' + LUT[k + 1] + ',' + LUT[k + 2] + ')');
+    function rgb(lut, k) { return 'rgb(' + lut[k] + ',' + lut[k + 1] + ',' + lut[k + 2] + ')'; }
+    var stops = [], i;
+    if (this.kind === 'cloud') {
+      return {
+        gradient: 'linear-gradient(to right, rgba(' + CLOUD_RGB.join(',') + ',0.05), rgb(' + CLOUD_RGB.join(',') + '))',
+        labels: [{ pos: 0, text: '0%' }, { pos: 1, text: '100% cloud cover' }]
+      };
     }
-    return { gradient: 'linear-gradient(to right,' + stops.join(',') + ')', max: max };
+    if (this.kind === 'precip') {
+      for (i = 0; i <= 10; i++) stops.push(rgb(RAIN_LUT, Math.round(i / 10 * 255) * 4));
+      var labels = [0.1, 1, 5, 20, 50].map(function (rate) {
+        return { pos: Math.sqrt(rate / MAX_RAIN_RATE), text: rate === 50 ? '50+ mm/h' : String(rate) };
+      });
+      return { gradient: 'linear-gradient(to right,' + stops.join(',') + ')', labels: labels };
+    }
+    var max = COLOR_MAX[this.level];
+    for (i = 0; i <= 10; i++) stops.push(rgb(LUT, Math.round(i / 10 * 255) * 4));
+    return {
+      gradient: 'linear-gradient(to right,' + stops.join(',') + ')',
+      labels: [{ pos: 0, text: '0' }, { pos: 1, text: max + '+ m/s' }]
+    };
   };
 
   /* ---- drawing ---- */
@@ -257,15 +339,25 @@
     if (!this.active || !this.frame) return;
     var f = this.frame, map = this.map, out = this.sampleOut;
     var img = this.heatImage, px = img.data, cw = this.heat.width, ch = this.heat.height;
-    var colorMax = COLOR_MAX[this.level];
+    var colorMax = COLOR_MAX[this.level], kind = this.kind;
     for (var y = 0; y < ch; y++) {
       for (var x = 0; x < cw; x++) {
         var p = map.unproject([x * CELL + CELL / 2, y * CELL + CELL / 2]);
         var o = (y * cw + x) * 4;
         if (!this.sampleWind(f, p.lng, p.lat, out)) { px[o + 3] = 0; continue; }
-        var speed = Math.sqrt(out[0] * out[0] + out[1] * out[1]);
-        var k = Math.min(255, Math.round(speed / colorMax * 255)) * 4;
-        px[o] = LUT[k]; px[o + 1] = LUT[k + 1]; px[o + 2] = LUT[k + 2]; px[o + 3] = LUT[k + 3];
+        if (kind === 'cloud') {
+          var cover = Math.max(0, Math.min(1, out[0]));
+          px[o] = CLOUD_RGB[0]; px[o + 1] = CLOUD_RGB[1]; px[o + 2] = CLOUD_RGB[2];
+          px[o + 3] = Math.pow(cover, 1.6) * 115;  // thin cloud barely shows, full overcast stays see-through
+        } else if (kind === 'precip') {
+          var lut = out[1] > 0.5 ? SNOW_LUT : RAIN_LUT;
+          var q = Math.max(0, Math.min(255, Math.round(out[0] * 255))) * 4;
+          px[o] = lut[q]; px[o + 1] = lut[q + 1]; px[o + 2] = lut[q + 2]; px[o + 3] = lut[q + 3];
+        } else {
+          var speed = Math.sqrt(out[0] * out[0] + out[1] * out[1]);
+          var k = Math.min(255, Math.round(speed / colorMax * 255)) * 4;
+          px[o] = LUT[k]; px[o + 1] = LUT[k + 1]; px[o + 2] = LUT[k + 2]; px[o + 3] = LUT[k + 3];
+        }
       }
     }
     this.hctx.putImageData(img, 0, 0);
@@ -289,7 +381,7 @@
     if (!this.active) return;
     this.raf = requestAnimationFrame(this.loop);
     var map = this.map, f = this.frame;
-    if (!f || map.isMoving() || document.hidden) return;
+    if (!f || this.kind !== 'wind' || map.isMoving() || document.hidden) return;
 
     var ctx = this.pctx, out = this.sampleOut, w = this.w, h = this.h;
     ctx.globalCompositeOperation = 'destination-in';
