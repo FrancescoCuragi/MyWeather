@@ -64,7 +64,7 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
                     onFocusHandled = viewModel::focusHandled,
                     onRefresh = viewModel::refresh,
                 )
-                Tab.Map -> MapScreen(center = places.firstOrNull())
+                Tab.Map -> MapScreen(center = places.firstOrNull(), windUnit = settings.windUnit)
                 Tab.Places -> LocationsScreen(
                     gpsPlace = places.firstOrNull { it.isCurrentLocation },
                     saved = saved,

@@ -34,6 +34,14 @@
     #play { width: 40px; height: 40px; border-radius: 20px; border: 0; flex: none; background: #4a4f7a; color: #fff; font-size: 16px; }
     #slider { flex: 1; min-width: 0; }
     #time { flex: none; min-width: 78px; text-align: right; font-variant-numeric: tabular-nums; }
+    #readout {
+      position: fixed; z-index: 2; left: 12px; bottom: 146px; min-width: 150px;
+      padding: 10px 14px; border-radius: 16px; background: rgba(30, 34, 48, 0.92);
+    }
+    #readout .close { position: absolute; top: 2px; right: 6px; border: 0; background: none; color: #9aa0b8; font-size: 18px; padding: 4px; }
+    #readout .speed { font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; }
+    #readout .arrow { display: inline-block; font-size: 22px; margin-right: 6px; }
+    #readout .meta { font-size: 12px; color: #9aa0b8; margin-top: 2px; }
     #status { position: fixed; z-index: 2; top: 120px; left: 12px; right: 12px; text-align: center; font-size: 13px; }
     [hidden] { display: none !important; }
   </style>
@@ -52,6 +60,13 @@
       <button class="chip" data-level="850mb">850 hPa</button>
       <button class="chip" data-level="250mb">250 hPa · jet</button>
     </div>
+  </div>
+
+  <div id="readout" hidden>
+    <button class="close" id="readoutClose" aria-label="Close">✕</button>
+    <div id="readoutWind"><span class="speed"><span class="arrow" id="readoutArrow">↑</span><span id="readoutSpeed"></span></span>
+      <div class="meta" id="readoutDir"></div></div>
+    <div class="meta" id="readoutPlace"></div>
   </div>
 
   <div id="legend" hidden>
@@ -190,7 +205,7 @@
       },
       show: function (i) {
         wind.prefetch(i + 3); wind.prefetch(i + 6);
-        return wind.setStep(i);
+        return wind.setStep(i).then(updateReadout);
       },
       delayMs: function () { return 400; }
     };
@@ -200,6 +215,52 @@
       $('legendGradient').style.background = l.gradient;
       $('legendMax').textContent = l.max + '+ m/s';
     }
+
+    /* ---------------- tap readout ---------------- */
+
+    var tapPoint = null;          // {lat, lon} of the last tap, or null
+    var windUnit = 'KmH';         // set by the app from the user's settings (see MapScreen.kt)
+    var BEAUFORT_KMH = [1, 5, 11, 19, 28, 38, 49, 61, 74, 88, 102, 117];
+    var COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+    var LEVEL_NAMES = { surface: 'Surface (10 m)', '850mb': '850 hPa (~1.5 km)', '250mb': '250 hPa (~10 km)' };
+
+    function formatSpeed(ms) {
+      var kmh = ms * 3.6;
+      switch (windUnit) {
+        case 'Ms': return ms.toFixed(1) + ' m/s';
+        case 'Knots': return Math.round(ms * 1.943844) + ' kt';
+        case 'Beaufort':
+          var force = BEAUFORT_KMH.findIndex(function (b) { return kmh < b; });
+          return (force < 0 ? 12 : force) + ' Bft';
+        default: return Math.round(kmh) + ' km/h';
+      }
+    }
+
+    function updateReadout() {
+      var box = $('readout');
+      if (!tapPoint) { box.hidden = true; return; }
+      box.hidden = false;
+      var w = mode === 'wind' && wind ? wind.windAt(tapPoint.lon, tapPoint.lat) : null;
+      $('readoutWind').hidden = !w;
+      if (w) {
+        var speed = Math.sqrt(w.u * w.u + w.v * w.v);
+        // Meteorological direction is where the wind comes FROM; the arrow points where it blows TO.
+        var from = (Math.atan2(-w.u, -w.v) * 180 / Math.PI + 360) % 360;
+        $('readoutSpeed').textContent = formatSpeed(speed);
+        $('readoutArrow').style.transform = 'rotate(' + (from + 180) + 'deg)';
+        $('readoutDir').textContent = 'from ' + COMPASS[Math.round(from / 22.5) % 16] + ' · ' + LEVEL_NAMES[wind.level] +
+          ' · ' + timeLabel.textContent;
+      }
+      $('readoutPlace').textContent = tapPoint.lat.toFixed(3) + ', ' + tapPoint.lon.toFixed(3);
+    }
+
+    $('readoutClose').addEventListener('click', function () {
+      tapPoint = null;
+      if (marker) { marker.remove(); marker = null; }
+      updateReadout();
+    });
+
+    window.setWindUnit = function (unit) { windUnit = unit; updateReadout(); };
 
     /* ---------------- modes and chips ---------------- */
 
@@ -234,6 +295,7 @@
         }).catch(function () { setStatus('Could not load radar'); });
       }
       markChips();
+      updateReadout();
     }
 
     document.querySelectorAll('[data-mode]').forEach(function (b) {
@@ -243,7 +305,7 @@
       b.addEventListener('click', function () {
         wind.level = b.dataset.level;
         updateLegend(); markChips();
-        wind.setStep(timeline.index);
+        wind.setStep(timeline.index).then(updateReadout);
       });
     });
 
@@ -262,6 +324,8 @@
     map.on('click', function (e) {
       if (marker) marker.remove();
       marker = new maplibregl.Marker({ color: '#9fa8ff' }).setLngLat(e.lngLat).addTo(map);
+      tapPoint = { lat: e.lngLat.lat, lon: e.lngLat.lng };
+      updateReadout();
       if (window.Android) window.Android.onMapTap(e.lngLat.lat, e.lngLat.lng);
     });
 

@@ -162,6 +162,12 @@
     return true;
   };
 
+  /** Wind (m/s) at a point for the frame on screen, or null when nothing is loaded or the point is off the grid. */
+  WindLayer.prototype.windAt = function (lon, lat) {
+    var out = [0, 0];
+    return this.frame && this.sampleWind(this.frame, lon, lat, out) ? { u: out[0], v: out[1] } : null;
+  };
+
   /** Bilinear wind sample at (lon, lat) in degrees; writes [u, v] in m/s to out, returns false outside the data. */
   WindLayer.prototype.sample = function (f, lon, lat, out) {
     if (lat > 90 || lat < -90) return false;
