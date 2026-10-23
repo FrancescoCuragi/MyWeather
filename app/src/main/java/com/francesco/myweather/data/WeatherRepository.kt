@@ -6,6 +6,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
 import okhttp3.MediaType.Companion.toMediaType
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -43,6 +47,23 @@ class WeatherRepository(
                 cacheFile(latitude, longitude).writeText(json.encodeToString(fresh))
             }
             fresh
+        }
+
+    /** The next days from every model in [FORECAST_MODELS], for comparing them side by side. */
+    suspend fun modelComparison(latitude: Double, longitude: Double): Result<ModelComparison> =
+        runCatching {
+            val hourly = api.modelForecast(latitude, longitude, FORECAST_MODELS.joinToString(",") { it.id }).hourly
+            val times = hourly.getValue("time").jsonArray.map { (it as JsonPrimitive).content }
+            val variables = OpenMeteoApi.MODEL_HOURLY_FIELDS.split(",")
+            ModelComparison(
+                times = times,
+                values = variables.associateWith { variable ->
+                    FORECAST_MODELS.mapNotNull { model ->
+                        val array = hourly["${variable}_${model.id}"] as? JsonArray ?: return@mapNotNull null
+                        model.id to array.map { (it as? JsonPrimitive)?.doubleOrNull }
+                    }.toMap()
+                },
+            )
         }
 
     private fun cacheFile(latitude: Double, longitude: Double) =

@@ -36,7 +36,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
-fun HomeScreen(state: WeatherUiState, onRefresh: () -> Unit) {
+fun HomeScreen(state: WeatherUiState, models: ModelsUiState?, onRefresh: () -> Unit, onLoadModels: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         when (state) {
             WeatherUiState.Loading -> CircularProgressIndicator()
@@ -48,14 +48,19 @@ fun HomeScreen(state: WeatherUiState, onRefresh: () -> Unit) {
                 Text(state.message, textAlign = TextAlign.Center)
                 Button(onClick = onRefresh) { Text("Retry") }
             }
-            is WeatherUiState.Success -> ForecastContent(state, onRefresh)
+            is WeatherUiState.Success -> ForecastContent(state, models, onRefresh, onLoadModels)
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ForecastContent(state: WeatherUiState.Success, onRefresh: () -> Unit) {
+private fun ForecastContent(
+    state: WeatherUiState.Success,
+    models: ModelsUiState?,
+    onRefresh: () -> Unit,
+    onLoadModels: () -> Unit,
+) {
     val forecast = state.forecast
     PullToRefreshBox(isRefreshing = state.isRefreshing, onRefresh = onRefresh) {
         LazyColumn(
@@ -66,9 +71,11 @@ private fun ForecastContent(state: WeatherUiState.Success, onRefresh: () -> Unit
             item { HeroCard(state.placeName, forecast) }
             item { UpdatedCaption(state) }
             item { HourlyStrip(forecast) }
+            item { MeteogramCard(forecast) }
             item { DetailsGrid(state) }
             item { Text("Next 14 days", style = MaterialTheme.typography.titleMedium) }
             items(forecast.daily.time.indices.toList()) { i -> DailyRow(forecast, i) }
+            item { ModelComparisonCard(forecast, models, onLoadModels) }
         }
     }
 }

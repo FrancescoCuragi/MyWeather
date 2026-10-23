@@ -8,6 +8,7 @@ import com.francesco.myweather.data.CachedForecast
 import com.francesco.myweather.data.ForecastResponse
 import com.francesco.myweather.data.GeoResult
 import com.francesco.myweather.data.LocationProvider
+import com.francesco.myweather.data.ModelComparison
 import com.francesco.myweather.data.Place
 import com.francesco.myweather.data.SettingsRepository
 import com.francesco.myweather.data.TemperatureUnit
@@ -43,6 +44,12 @@ sealed interface WeatherUiState {
     ) : WeatherUiState
 
     data class Error(val message: String) : WeatherUiState
+}
+
+sealed interface ModelsUiState {
+    data object Loading : ModelsUiState
+    data class Ready(val comparison: ModelComparison) : ModelsUiState
+    data object Failed : ModelsUiState
 }
 
 sealed interface SearchState {
@@ -86,6 +93,22 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
 
     private val _forecasts = MutableStateFlow<Map<String, WeatherUiState>>(emptyMap())
     val forecasts: StateFlow<Map<String, WeatherUiState>> = _forecasts.asStateFlow()
+
+    private val _models = MutableStateFlow<Map<String, ModelsUiState>>(emptyMap())
+    val models: StateFlow<Map<String, ModelsUiState>> = _models.asStateFlow()
+
+    /** Fetches the multi-model comparison for a place the first time it is needed; retries after a failure. */
+    fun loadModels(place: Place) {
+        val current = _models.value[place.key]
+        if (current is ModelsUiState.Loading || current is ModelsUiState.Ready) return
+        _models.update { it + (place.key to ModelsUiState.Loading) }
+        viewModelScope.launch {
+            val result = repository.modelComparison(place.latitude, place.longitude)
+            _models.update {
+                it + (place.key to result.fold({ c -> ModelsUiState.Ready(c) }, { ModelsUiState.Failed }))
+            }
+        }
+    }
 
     private val _search = MutableStateFlow<SearchState>(SearchState.Idle)
     val search: StateFlow<SearchState> = _search.asStateFlow()

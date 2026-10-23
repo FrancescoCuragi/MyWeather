@@ -21,6 +21,22 @@ fun UserSettings.temperature(celsius: Double): String {
     return "${value.roundToInt()}°"
 }
 
+/** Numeric versions for charts, which draw numbers instead of text; labels name the unit. */
+fun UserSettings.temperatureValue(celsius: Double): Double = when (temperatureUnit) {
+    TemperatureUnit.Celsius -> celsius
+    TemperatureUnit.Fahrenheit -> celsius * 9 / 5 + 32
+}
+
+fun UserSettings.windValue(kmh: Double): Double = when (windUnit) {
+    WindUnit.KmH -> kmh
+    WindUnit.Ms -> kmh / 3.6
+    WindUnit.Knots -> kmh / 1.852
+    WindUnit.Beaufort -> beaufort(kmh).toDouble()
+}
+
+val UserSettings.temperatureLabel: String get() = temperatureUnit.label
+val UserSettings.windLabel: String get() = windUnit.label
+
 fun UserSettings.wind(kmh: Double): String = when (windUnit) {
     WindUnit.KmH -> "${kmh.roundToInt()} km/h"
     WindUnit.Ms -> "%.1f m/s".format(Locale.ROOT, kmh / 3.6)
