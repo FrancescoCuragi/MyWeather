@@ -115,6 +115,10 @@
       host.appendChild(c);
     });
     this.hctx = this.heat.getContext('2d');
+    this.maskCanvas = document.createElement('canvas');   // where the map shows water (sea layers only)
+    this.mctx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
+    this.maskData = null;
+    this.maskKey = '';
     this.pctx = this.parts.getContext('2d');
     this.sampleOut = [0, 0, 0];
     this.sampleTmp = [0, 0, 0];
@@ -127,6 +131,7 @@
     this.onMove = function () { self.scheduleHeat(); };
     this.onMoveEnd = function () { self.drawHeat(); self.reseedAll(); };
     this.onResize = function () { self.resize(); self.drawHeat(); self.reseedAll(); };
+    this.onIdle = function () { self.maskKey = ''; self.drawHeat(); };
     this.loop = function () { self.tick(); };
     this.resize();
   }
@@ -141,6 +146,9 @@
     this.pctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.count = Math.min(4000, Math.round(this.w * this.h / 300));
     this.heatImage = this.hctx.createImageData(this.heat.width, this.heat.height);
+    this.maskCanvas.width = this.heat.width;
+    this.maskCanvas.height = this.heat.height;
+    this.maskKey = '';
   };
 
   /* ---- data ---- */
@@ -326,7 +334,7 @@
     this.applyKind();
     var m = this.map;
     m.on('movestart', this.onMoveStart); m.on('move', this.onMove);
-    m.on('moveend', this.onMoveEnd); m.on('resize', this.onResize);
+    m.on('moveend', this.onMoveEnd); m.on('resize', this.onResize); m.on('idle', this.onIdle);
     this.drawHeat(); this.reseedAll();
     this.raf = requestAnimationFrame(this.loop);
   };
@@ -337,7 +345,7 @@
     this.heat.style.display = this.parts.style.display = 'none';
     var m = this.map;
     m.off('movestart', this.onMoveStart); m.off('move', this.onMove);
-    m.off('moveend', this.onMoveEnd); m.off('resize', this.onResize);
+    m.off('moveend', this.onMoveEnd); m.off('resize', this.onResize); m.off('idle', this.onIdle);
     cancelAnimationFrame(this.raf);
   };
 
@@ -380,6 +388,50 @@
 
   /* ---- drawing ---- */
 
+  /**
+   * The wave data is on a 28 km grid, far coarser than the coastline, so on its own it spills over onto land.
+   * The map itself knows exactly where the water is: paint its water polygons into a mask with the same
+   * resolution as the colour layer, then use it to clip the colours and to keep crests off the land.
+   */
+  WindLayer.prototype.updateMask = function () {
+    var map = this.map, c = map.getCenter();
+    var key = [c.lng.toFixed(5), c.lat.toFixed(5), map.getZoom().toFixed(3), map.getBearing().toFixed(1), this.w, this.h].join();
+    if (key === this.maskKey && this.maskData) return this.maskData;
+    this.maskKey = key;
+
+    var ctx = this.mctx, cw = this.maskCanvas.width, ch = this.maskCanvas.height;
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.fillStyle = ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;  // the stroke also covers hairline seams between neighbouring map tiles
+    var features = map.queryRenderedFeatures({ layers: ['water'] });
+    for (var i = 0; i < features.length; i++) {
+      var g = features[i].geometry;
+      var polygons = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+      for (var k = 0; k < polygons.length; k++) {
+        ctx.beginPath();
+        polygons[k].forEach(function (ring) {
+          ring.forEach(function (pt, n) {
+            var s = map.project(pt);
+            n === 0 ? ctx.moveTo(s.x / CELL, s.y / CELL) : ctx.lineTo(s.x / CELL, s.y / CELL);
+          });
+          ctx.closePath();
+        });
+        ctx.fill('evenodd');
+        ctx.stroke();
+      }
+    }
+    this.maskData = ctx.getImageData(0, 0, cw, ch).data;
+    return this.maskData;
+  };
+
+  /** True where the map shows water at a screen position (css pixels). Always true when no mask is in use. */
+  WindLayer.prototype.isWater = function (x, y) {
+    if (!this.maskData) return true;
+    var cx = Math.floor(x / CELL), cy = Math.floor(y / CELL), cw = this.maskCanvas.width;
+    if (cx < 0 || cy < 0 || cx >= cw || cy >= this.maskCanvas.height) return false;
+    return this.maskData[(cy * cw + cx) * 4 + 3] >= 128;
+  };
+
   WindLayer.prototype.scheduleHeat = function () {
     var self = this;
     if (this.heatPending) return;
@@ -392,6 +444,9 @@
     var f = this.frame, map = this.map, out = this.sampleOut;
     var img = this.heatImage, px = img.data, cw = this.heat.width, ch = this.heat.height;
     var colorMax = COLOR_MAX[this.level], kind = this.kind;
+    var seaOnly = kind === 'wave' || kind === 'period';
+    var mask = seaOnly ? this.updateMask() : null;
+    if (!seaOnly) this.maskData = null;
     for (var y = 0; y < ch; y++) {
       for (var x = 0; x < cw; x++) {
         var p = map.unproject([x * CELL + CELL / 2, y * CELL + CELL / 2]);
@@ -404,7 +459,8 @@
         } else if (kind === 'wave' || kind === 'period') {
           var table = kind === 'wave' ? WAVE_LUT : PERIOD_LUT, top = kind === 'wave' ? MAX_WAVE_M : MAX_PERIOD_S;
           var wi = Math.max(0, Math.min(255, Math.round(out[0] / top * 255))) * 4;
-          px[o] = table[wi]; px[o + 1] = table[wi + 1]; px[o + 2] = table[wi + 2]; px[o + 3] = table[wi + 3];
+          px[o] = table[wi]; px[o + 1] = table[wi + 1]; px[o + 2] = table[wi + 2];
+          px[o + 3] = table[wi + 3] * mask[o + 3] / 255;  // clip to the sea
         } else if (kind === 'precip') {
           var lut = out[1] > 0.5 ? SNOW_LUT : RAIN_LUT;
           var q = Math.max(0, Math.min(255, Math.round(out[0] * 255))) * 4;
@@ -488,15 +544,19 @@
     var n = Math.round(this.count * 0.32);  // crests are larger than particles, so fewer of them
     for (var i = 0; i < n; i++) {
       var age = ++this.age[i];
-      if (age > CREST_LIFE || !this.sampleWind(f, this.lon[i], this.lat[i], out)) { this.respawn(i); continue; }
+      if (age > CREST_LIFE) { this.respawn(i); continue; }
+      // A crest that starts on land (no wave data there) just stays idle until its life runs out. Retrying
+      // elsewhere instead would crowd every crest into the water and make the sea look far denser than the rest.
+      if (!this.sampleWind(f, this.lon[i], this.lat[i], out)) continue;
       var mag = Math.sqrt(out[1] * out[1] + out[2] * out[2]);
-      if (mag < 0.3 || out[0] < 0.05) { this.respawn(i); continue; }  // land or the coast edge
+      if (mag < 0.3 || out[0] < 0.05) continue;
       var east = out[1] / mag, north = out[2] / mag;
       var pace = WAVE_PX * (0.6 + Math.min(1, out[0] / 5));            // bigger seas drift a little faster
       this.lon[i] += east * pace * degPerPx;
       this.lat[i] += north * pace * degPerPx * Math.cos(this.lat[i] * Math.PI / 180);
       var s = map.project([this.lon[i], this.lat[i]]);
       if (s.x < -30 || s.x > w + 30 || s.y < -30 || s.y > h + 30) { this.respawn(i); continue; }
+      if (!this.isWater(s.x, s.y)) continue;  // drifted onto land: hide it until it fades out and restarts
 
       var sx = east, sy = -north;               // travel direction on screen (y points down)
       var qx = -sy, qy = sx;                    // the crest runs across it
