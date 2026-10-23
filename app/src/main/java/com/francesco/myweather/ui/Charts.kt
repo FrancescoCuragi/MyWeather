@@ -179,10 +179,10 @@ fun MeteogramCard(forecast: ForecastResponse) {
                 listOf(ChartLine("Temperature", primary, indices.map { settings.temperatureValue(hourly.temperature[it]) })),
             )
 
-            ChartTitle("Rain", "mm/h")
+            ChartTitle("Rain", "${settings.precipitationLabel}/h")
             TimeChart(
                 times, emptyList(),
-                bars = indices.map { hourly.precipitation[it] },
+                bars = indices.map { hourly.precipitation[it]?.let(settings::precipitationValue) },
                 barColor = Color(0xFF5AA9FF), minZero = true, height = 90.dp,
             )
 
@@ -265,7 +265,7 @@ private fun ComparisonChart(forecast: ForecastResponse, comparison: ModelCompari
     }
     val unit = when (what) {
         Comparable.Temperature -> settings.temperatureLabel
-        Comparable.Rain -> "mm, running total"
+        Comparable.Rain -> "${settings.precipitationLabel}, running total"
         Comparable.Wind -> settings.windLabel
         Comparable.Pressure -> "hPa"
     }
@@ -278,7 +278,7 @@ private fun ComparisonChart(forecast: ForecastResponse, comparison: ModelCompari
             Comparable.Wind -> slice.map { it?.let(settings::windValue) }
             Comparable.Rain -> {  // a running total shows at a glance how much the models disagree
                 var total = 0.0
-                slice.map { v -> v?.let { total += it; total } }
+                slice.map { v -> v?.let { total += settings.precipitationValue(it); total } }
             }
             Comparable.Pressure -> slice
         }

@@ -16,6 +16,11 @@ import kotlinx.coroutines.flow.map
 
 enum class TemperatureUnit(val label: String) { Celsius("°C"), Fahrenheit("°F") }
 
+enum class PrecipitationUnit(val label: String) { Millimetres("mm"), Inches("in") }
+
+/** Metric shows waves in metres and distances in kilometres; imperial uses feet and miles. */
+enum class LengthUnit(val label: String) { Metric("m · km"), Imperial("ft · mi") }
+
 enum class WindUnit(val label: String) {
     KmH("km/h"),
     Ms("m/s"),
@@ -27,6 +32,8 @@ data class UserSettings(
     val temperatureUnit: TemperatureUnit = TemperatureUnit.Celsius,
     val windUnit: WindUnit = WindUnit.KmH,
     val use24Hour: Boolean = true,
+    val precipitationUnit: PrecipitationUnit = PrecipitationUnit.Millimetres,
+    val lengthUnit: LengthUnit = LengthUnit.Metric,
 )
 
 /** Which background alerts are on. All start off: turning one on is also what asks for the notification permission. */
@@ -58,6 +65,8 @@ class SettingsRepository(private val context: Context) {
             temperatureUnit = prefs.enumOrDefault(TEMPERATURE_KEY, TemperatureUnit.Celsius),
             windUnit = prefs.enumOrDefault(WIND_KEY, WindUnit.KmH),
             use24Hour = prefs[USE_24_HOUR_KEY] ?: true,
+            precipitationUnit = prefs.enumOrDefault(PRECIPITATION_KEY, PrecipitationUnit.Millimetres),
+            lengthUnit = prefs.enumOrDefault(LENGTH_KEY, LengthUnit.Metric),
         )
     }
 
@@ -126,6 +135,8 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setTemperatureUnit(unit: TemperatureUnit) = edit { it[TEMPERATURE_KEY] = unit.name }
     suspend fun setWindUnit(unit: WindUnit) = edit { it[WIND_KEY] = unit.name }
+    suspend fun setPrecipitationUnit(unit: PrecipitationUnit) = edit { it[PRECIPITATION_KEY] = unit.name }
+    suspend fun setLengthUnit(unit: LengthUnit) = edit { it[LENGTH_KEY] = unit.name }
     suspend fun setUse24Hour(value: Boolean) = edit { it[USE_24_HOUR_KEY] = value }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
@@ -140,6 +151,8 @@ class SettingsRepository(private val context: Context) {
     private companion object {
         val TEMPERATURE_KEY = stringPreferencesKey("temperature_unit")
         val WIND_KEY = stringPreferencesKey("wind_unit")
+        val PRECIPITATION_KEY = stringPreferencesKey("precipitation_unit")
+        val LENGTH_KEY = stringPreferencesKey("length_unit")
         val USE_24_HOUR_KEY = booleanPreferencesKey("use_24_hour")
         val NOTIFY_RAIN_KEY = booleanPreferencesKey("notify_rain")
         val NOTIFY_WARNINGS_KEY = booleanPreferencesKey("notify_warnings")

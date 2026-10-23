@@ -1,6 +1,8 @@
 package com.francesco.myweather.ui
 
 import androidx.compose.runtime.compositionLocalOf
+import com.francesco.myweather.data.LengthUnit
+import com.francesco.myweather.data.PrecipitationUnit
 import com.francesco.myweather.data.TemperatureUnit
 import com.francesco.myweather.data.UserSettings
 import com.francesco.myweather.data.WindUnit
@@ -36,6 +38,33 @@ fun UserSettings.windValue(kmh: Double): Double = when (windUnit) {
 
 val UserSettings.temperatureLabel: String get() = temperatureUnit.label
 val UserSettings.windLabel: String get() = windUnit.label
+
+private const val MM_PER_INCH = 25.4
+private const val METRES_PER_FOOT = 0.3048
+private const val METRES_PER_MILE = 1609.344
+
+/** Rain and snow arrive in millimetres (of water). */
+fun UserSettings.precipitationValue(mm: Double): Double = when (precipitationUnit) {
+    PrecipitationUnit.Millimetres -> mm
+    PrecipitationUnit.Inches -> mm / MM_PER_INCH
+}
+
+/** A rain amount with its unit, with enough decimals for the unit: "2.4 mm" or "0.09 in". */
+fun UserSettings.precipitation(mm: Double): String {
+    val value = precipitationValue(mm)
+    return when (precipitationUnit) {
+        PrecipitationUnit.Millimetres -> "%.1f mm".format(Locale.ROOT, value)
+        PrecipitationUnit.Inches -> "%.2f in".format(Locale.ROOT, value)
+    }
+}
+
+val UserSettings.precipitationLabel: String get() = precipitationUnit.label
+
+/** Visibility, which arrives in metres: kilometres or miles. */
+fun UserSettings.distance(metres: Double): String = when (lengthUnit) {
+    LengthUnit.Metric -> "%.1f km".format(Locale.ROOT, metres / 1000)
+    LengthUnit.Imperial -> "%.1f mi".format(Locale.ROOT, metres / METRES_PER_MILE)
+}
 
 fun UserSettings.wind(kmh: Double): String = when (windUnit) {
     WindUnit.KmH -> "${kmh.roundToInt()} km/h"

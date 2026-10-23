@@ -12,10 +12,12 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.francesco.myweather.data.Place
-import com.francesco.myweather.data.WindUnit
+import com.francesco.myweather.data.UserSettings
 
 private const val TAG = "MapScreen"
 private const val ASSET_HOST = "appassets.androidx.com"
@@ -25,11 +27,13 @@ private const val DEFAULT_ZOOM = 6
 /**
  * Full-screen map: a WebView running MapLibre GL JS (see assets/map/map.html).
  * Kotlin -> JS goes through evaluateJavascript; JS -> Kotlin through the `Android` interface.
- * The page shows its own readout when the map is tapped, so it needs the user's wind unit.
+ * The page shows its own readout and legends, so it needs the user's wind, rain and length units.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun MapScreen(center: Place?, windUnit: WindUnit) {
+fun MapScreen(center: Place?, units: UserSettings) {
+    // The page loads on its own schedule, so it is told the units both when they change and when it finishes loading.
+    val latestUnits by rememberUpdatedState(units)
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { context ->
@@ -53,6 +57,7 @@ fun MapScreen(center: Place?, windUnit: WindUnit) {
                     ): WebResourceResponse? = serveBundledAsset(context, request.url)
 
                     override fun onPageFinished(view: WebView, url: String) {
+                        view.applyUnits(latestUnits)
                         center?.let {
                             view.evaluateJavascript(
                                 "setCenter(${it.latitude}, ${it.longitude}, $DEFAULT_ZOOM)",
@@ -64,9 +69,15 @@ fun MapScreen(center: Place?, windUnit: WindUnit) {
                 loadUrl(MAP_URL)
             }
         },
-        // Runs when the unit changes. The page applies the last unit it was given once it has loaded.
-        update = { it.evaluateJavascript("window.setWindUnit && setWindUnit('${windUnit.name}')", null) },
+        update = { it.applyUnits(units) },
         onRelease = { it.destroy() },
+    )
+}
+
+private fun WebView.applyUnits(units: UserSettings) {
+    evaluateJavascript(
+        "window.setUnits && setUnits('${units.windUnit.name}', '${units.precipitationUnit.name}', '${units.lengthUnit.name}')",
+        null,
     )
 }
 

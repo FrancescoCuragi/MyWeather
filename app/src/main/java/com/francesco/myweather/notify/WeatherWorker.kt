@@ -12,6 +12,7 @@ import com.francesco.myweather.data.Place
 import com.francesco.myweather.data.SettingsRepository
 import com.francesco.myweather.data.UserSettings
 import com.francesco.myweather.data.WeatherRepository
+import com.francesco.myweather.ui.precipitation
 import com.francesco.myweather.ui.temperature
 import com.francesco.myweather.ui.weatherLabel
 import com.francesco.myweather.ui.wind
@@ -127,7 +128,7 @@ class WeatherWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             .mapNotNull { hourly.windSpeed.getOrNull(it) }.maxOrNull()
         val text = listOfNotNull(
             "High ${units.temperature(daily.temperatureMax[0])}, low ${units.temperature(daily.temperatureMin[0])}",
-            rain?.takeIf { it >= 0.1 }?.let { "rain %.1f mm".format(Locale.ROOT, it) },
+            rain?.takeIf { it >= 0.1 }?.let { "rain ${units.precipitation(it)}" },
             strongestWind?.let { "wind up to ${units.wind(it)}" },
         ).joinToString(" · ")
         Notifier.post(context, Notifier.ID_SUMMARY, Notifier.CHANNEL_SUMMARY,

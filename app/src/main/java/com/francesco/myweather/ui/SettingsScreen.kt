@@ -32,7 +32,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.francesco.myweather.data.LengthUnit
 import com.francesco.myweather.data.NotificationPrefs
+import com.francesco.myweather.data.PrecipitationUnit
 import com.francesco.myweather.data.TemperatureUnit
 import com.francesco.myweather.data.UserSettings
 import com.francesco.myweather.data.WindUnit
@@ -43,6 +45,8 @@ fun SettingsScreen(
     settings: UserSettings,
     onTemperatureUnit: (TemperatureUnit) -> Unit,
     onWindUnit: (WindUnit) -> Unit,
+    onPrecipitationUnit: (PrecipitationUnit) -> Unit,
+    onLengthUnit: (LengthUnit) -> Unit,
     onUse24Hour: (Boolean) -> Unit,
     notificationPrefs: NotificationPrefs,
     onNotificationChange: ((NotificationPrefs) -> NotificationPrefs) -> Unit,
@@ -80,6 +84,16 @@ fun SettingsScreen(
         SettingGroup("Wind speed") {
             WindUnit.entries.forEach {
                 Choice(it.label, settings.windUnit == it) { onWindUnit(it) }
+            }
+        }
+        SettingGroup("Rain and snow") {
+            PrecipitationUnit.entries.forEach {
+                Choice(it.label, settings.precipitationUnit == it) { onPrecipitationUnit(it) }
+            }
+        }
+        SettingGroup("Waves and distance") {
+            LengthUnit.entries.forEach {
+                Choice(it.label, settings.lengthUnit == it) { onLengthUnit(it) }
             }
         }
         SettingGroup("Time format") {

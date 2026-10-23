@@ -115,9 +115,23 @@
   var TURB_STOPS = [[0, 60, 90, 160], [4, 250, 225, 70], [8, 245, 140, 40], [12, 230, 55, 60], [20, 170, 40, 170]];
   var TURB_LUT = buildValueLut(TURB_STOPS, MAX_TURBULENCE, function (t) { return t < 2 ? 0 : Math.min(125, 10 + (t - 2) * 20); });
 
+  /** "25+ m/s" in the unit the user picked; Beaufort shows the force the top of the scale corresponds to. */
+  function windTopLabel(maxMs, unit) {
+    var kmh = maxMs * 3.6;
+    if (unit === 'Ms') return maxMs + '+ m/s';
+    if (unit === 'Knots') return Math.round(maxMs * 1.943844) + '+ kt';
+    if (unit === 'Beaufort') {
+      var bounds = [1, 5, 11, 19, 28, 38, 49, 61, 74, 88, 102, 117], force = 12;
+      for (var i = 0; i < bounds.length; i++) if (kmh < bounds[i]) { force = i; break; }
+      return force + '+ Bft';
+    }
+    return Math.round(kmh) + '+ km/h';
+  }
+
   function WindLayer(map, host) {
     this.map = map;
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.units = { wind: 'KmH', precip: 'Millimetres', length: 'Metric' };  // set by the page from the app's settings
     this.meta = null;
     this.metas = {};            // base folder -> loaded meta.json
     this.metaPromises = {};
@@ -392,10 +406,15 @@
     if (this.kind === 'rainacc') {
       var maxMm = this.meta.levels[this.level].maxMm, lut = ACC_LUTS[maxMm] || (ACC_LUTS[maxMm] = buildAccLut(maxMm));
       for (i = 0; i <= 10; i++) stops.push(rgb(lut, Math.round(i / 10 * 255) * 4));
-      var marks = maxMm > 100 ? [1, 10, 25, 50, 150] : [1, 5, 15, 30, 60];
+      var inch = this.units.precip === 'Inches', big = maxMm > 100;
+      var marks = inch
+        ? (big ? [[2.54, '0.1'], [12.7, '0.5'], [25.4, '1'], [50.8, '2'], [150, '6+ in']]
+               : [[1.27, '0.05'], [5.08, '0.2'], [15.24, '0.6'], [30.48, '1.2'], [60, '2.4+ in']])
+        : (big ? [[1, '1'], [10, '10'], [25, '25'], [50, '50'], [150, '150+ mm']]
+               : [[1, '1'], [5, '5'], [15, '15'], [30, '30'], [60, '60+ mm']]);
       return {
         gradient: 'linear-gradient(to right,' + stops.join(',') + ')',
-        labels: marks.map(function (m) { return { pos: Math.sqrt(m / maxMm), text: m === maxMm ? m + '+ mm' : String(m) }; })
+        labels: marks.map(function (m) { return { pos: Math.sqrt(m[0] / maxMm), text: m[1] }; })
       };
     }
     if (this.kind === 'turbulence') {
@@ -409,26 +428,28 @@
       var isWave = this.kind === 'wave', table = isWave ? WAVE_LUT : PERIOD_LUT;
       var top = isWave ? 12 : 24, full = isWave ? MAX_WAVE_M : MAX_PERIOD_S;  // legend range, and the texture range
       for (i = 0; i <= 10; i++) stops.push(rgb(table, Math.round(i / 10 * top / full * 255) * 4));
-      var marks = isWave ? [0, 3, 6, 9, 12] : [0, 6, 12, 18, 24];
+      var feet = isWave && this.units.length === 'Imperial';
+      var marks = !isWave ? [[0, '0'], [6, '6'], [12, '12'], [18, '18'], [24, '24+ s']]
+        : feet ? [[0, '0'], [3.048, '10'], [6.096, '20'], [9.144, '30'], [12, '40+ ft']]
+        : [[0, '0'], [3, '3'], [6, '6'], [9, '9'], [12, '12+ m']];
       return {
         gradient: 'linear-gradient(to right,' + stops.join(',') + ')',
-        labels: marks.map(function (m) {
-          return { pos: m / top, text: m === top ? m + '+ ' + (isWave ? 'm' : 's') : String(m) };
-        })
+        labels: marks.map(function (m) { return { pos: m[0] / top, text: m[1] }; })
       };
     }
     if (this.kind === 'precip') {
       for (i = 0; i <= 10; i++) stops.push(rgb(RAIN_LUT, Math.round(i / 10 * 255) * 4));
-      var labels = [0.1, 1, 5, 20, 50].map(function (rate) {
-        return { pos: Math.sqrt(rate / MAX_RAIN_RATE), text: rate === 50 ? '50+ mm/h' : String(rate) };
-      });
+      var rateMarks = this.units.precip === 'Inches'
+        ? [[0.254, '0.01'], [1.27, '0.05'], [5.08, '0.2'], [20.32, '0.8'], [50, '2+ in/h']]
+        : [[0.1, '0.1'], [1, '1'], [5, '5'], [20, '20'], [50, '50+ mm/h']];
+      var labels = rateMarks.map(function (m) { return { pos: Math.sqrt(m[0] / MAX_RAIN_RATE), text: m[1] }; });
       return { gradient: 'linear-gradient(to right,' + stops.join(',') + ')', labels: labels };
     }
     var max = COLOR_MAX[this.level];
     for (i = 0; i <= 10; i++) stops.push(rgb(LUT, Math.round(i / 10 * 255) * 4));
     return {
       gradient: 'linear-gradient(to right,' + stops.join(',') + ')',
-      labels: [{ pos: 0, text: '0' }, { pos: 1, text: max + '+ m/s' }]
+      labels: [{ pos: 0, text: '0' }, { pos: 1, text: windTopLabel(max, this.units.wind) }]
     };
   };
 

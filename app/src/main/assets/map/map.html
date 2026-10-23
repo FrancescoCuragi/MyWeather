@@ -350,7 +350,8 @@
     /* ---------------- tap readout ---------------- */
 
     var tapPoint = null;          // {lat, lon} of the last tap, or null
-    var windUnit = 'KmH';         // set by the app from the user's settings (see MapScreen.kt)
+    var windUnit = 'KmH';         // the three units are set by the app from the user's settings (see MapScreen.kt)
+    var precipUnit = 'Millimetres', lengthUnit = 'Metric';
     var BEAUFORT_KMH = [1, 5, 11, 19, 28, 38, 49, 61, 74, 88, 102, 117];
     var COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
     var LEVEL_NAMES = {
@@ -360,6 +361,19 @@
       'rainacc-3h': 'Rain total, past 3 hours', 'rainacc-24h': 'Rain total, past 24 hours',
       'clouds-total': 'Total cloud cover', 'clouds-low': 'Low clouds', 'clouds-mid': 'Mid-level clouds', 'clouds-high': 'High clouds'
     };
+
+    /** A rain amount, given in mm (or mm/h when per is "/h"), in the user's unit. */
+    function formatRain(mm, per) {
+      if (precipUnit === 'Inches') {
+        var inch = mm / 25.4;
+        return (inch < 0.01 ? '<0.01' : inch.toFixed(2)) + ' in' + per;
+      }
+      return (mm < 10 ? mm.toFixed(1) : Math.round(mm)) + ' mm' + per;
+    }
+
+    function formatWaveHeight(metres) {
+      return lengthUnit === 'Imperial' ? Math.round(metres / 0.3048) + ' ft' : metres.toFixed(1) + ' m';
+    }
 
     function formatSpeed(ms) {
       var kmh = ms * 3.6;
@@ -395,13 +409,13 @@
           var cameFrom = (heading + 180) % 360;
           var isSea = v.u >= 0.05 && Math.sqrt(v.v * v.v + v.w * v.w) >= 0.3;
           $('readoutArrow').hidden = !isSea;
-          $('readoutSpeed').textContent = isSea ? v.u.toFixed(1) + ' m' : 'No wave data';
+          $('readoutSpeed').textContent = isSea ? formatWaveHeight(v.u) : 'No wave data';
           $('readoutArrow').style.transform = 'rotate(' + heading + 'deg)';
           $('readoutDir').textContent = (isSea ? 'from ' + COMPASS[Math.round(cameFrom / 22.5) % 16] + ' · ' : 'Land · ') +
             LEVEL_NAMES[wind.level] + ' · ' + when;
         } else if (wind.kind === 'rainacc') {
           var total = v.u * v.u * wind.accMax();  // the texture stores sqrt(mm / max)
-          $('readoutSpeed').textContent = total < 0.1 ? 'No rain' : (total < 10 ? total.toFixed(1) : Math.round(total)) + ' mm';
+          $('readoutSpeed').textContent = total < 0.1 ? 'No rain' : formatRain(total, '');
           $('readoutDir').textContent = LEVEL_NAMES[wind.level] + ' · ' + when;
         } else if (wind.kind === 'turbulence') {
           var ti = v.u;  // Ellrod index, 1e-7 s^-2
@@ -416,7 +430,7 @@
           $('readoutDir').textContent = LEVEL_NAMES[wind.level] + ' · ' + when;
         } else {
           var rate = v.u * v.u * 50;  // the texture stores sqrt(rate / 50 mm/h)
-          $('readoutSpeed').textContent = rate < 0.05 ? 'No precipitation' : (rate < 10 ? rate.toFixed(1) : Math.round(rate)) + ' mm/h';
+          $('readoutSpeed').textContent = rate < 0.05 ? 'No precipitation' : formatRain(rate, '/h');
           $('readoutDir').textContent = (rate < 0.05 ? '' : (v.v > 0.5 ? 'Snow · ' : 'Rain · ')) + when;
         }
       }
@@ -429,7 +443,12 @@
       updateReadout();
     });
 
-    window.setWindUnit = function (unit) { windUnit = unit; updateReadout(); };
+    window.setUnits = function (wind_, precip, length) {
+      windUnit = wind_; precipUnit = precip; lengthUnit = length;
+      if (wind) wind.units = { wind: wind_, precip: precip, length: length };
+      if (wind && wind.meta && isFieldMode(mode)) updateLegend();
+      updateReadout();
+    };
 
     /* ---------------- modes and chips ---------------- */
 
@@ -547,6 +566,7 @@
       host.id = 'overlay';
       map.getContainer().appendChild(host);
       wind = new WindLayer(map, host);
+      wind.units = { wind: windUnit, precip: precipUnit, length: lengthUnit };  // the app may have sent them before this existed
       buildMenu();
       setMode('wind');
     });

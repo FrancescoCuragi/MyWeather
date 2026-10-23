@@ -68,7 +68,7 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
                     onRefresh = viewModel::refresh,
                     onLoadModels = viewModel::loadModels,
                 )
-                Tab.Map -> MapScreen(center = places.firstOrNull(), windUnit = settings.windUnit)
+                Tab.Map -> MapScreen(center = places.firstOrNull(), units = settings)
                 Tab.Places -> LocationsScreen(
                     gpsPlace = places.firstOrNull { it.isCurrentLocation },
                     saved = saved,
@@ -82,6 +82,8 @@ fun MyWeatherApp(viewModel: WeatherViewModel) {
                     settings = settings,
                     onTemperatureUnit = viewModel::setTemperatureUnit,
                     onWindUnit = viewModel::setWindUnit,
+                    onPrecipitationUnit = viewModel::setPrecipitationUnit,
+                    onLengthUnit = viewModel::setLengthUnit,
                     onUse24Hour = viewModel::setUse24Hour,
                     notificationPrefs = notificationPrefs,
                     onNotificationChange = viewModel::updateNotifications,

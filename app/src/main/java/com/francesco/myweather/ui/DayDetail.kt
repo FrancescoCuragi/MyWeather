@@ -37,7 +37,7 @@ fun DayDetail(forecast: ForecastResponse, dayIndex: Int) {
     val temperatures = "High ${settings.temperature(daily.temperatureMax[dayIndex])} · " +
         "Low ${settings.temperature(daily.temperatureMin[dayIndex])}"
     val conditions = listOfNotNull(
-        rainTotal?.let { "Rain %.1f mm".format(Locale.ROOT, it) },
+        rainTotal?.let { "Rain ${settings.precipitation(it)}" },
         strongestWind?.let { "Wind up to ${settings.wind(it)}" },
     ).joinToString(" · ")
     val sun = "Sunrise ${settings.clock(LocalDateTime.parse(daily.sunrise[dayIndex]))} · " +
@@ -81,7 +81,7 @@ private fun HourCard(forecast: ForecastResponse, k: Int, time: LocalDateTime, is
             Text("${h.precipitationProbability[k] ?: 0}%", style = MaterialTheme.typography.labelSmall)
             // Always reserve the line, so cards stay the same height whether or not rain is expected.
             Text(
-                if (rain >= 0.1) "%.1f mm".format(Locale.ROOT, rain) else " ",
+                if (rain >= 0.1) settings.precipitation(rain) else " ",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
             )

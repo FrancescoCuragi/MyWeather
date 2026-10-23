@@ -9,7 +9,9 @@ import com.francesco.myweather.data.ForecastResponse
 import com.francesco.myweather.data.GeoResult
 import com.francesco.myweather.data.LocationProvider
 import com.francesco.myweather.data.ModelComparison
+import com.francesco.myweather.data.LengthUnit
 import com.francesco.myweather.data.NotificationPrefs
+import com.francesco.myweather.data.PrecipitationUnit
 import com.francesco.myweather.data.Place
 import com.francesco.myweather.data.SettingsRepository
 import com.francesco.myweather.data.TemperatureUnit
@@ -86,6 +88,14 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
 
     fun setTemperatureUnit(unit: TemperatureUnit) {
         viewModelScope.launch { settingsRepository.setTemperatureUnit(unit) }
+    }
+
+    fun setPrecipitationUnit(unit: PrecipitationUnit) {
+        viewModelScope.launch { settingsRepository.setPrecipitationUnit(unit) }
+    }
+
+    fun setLengthUnit(unit: LengthUnit) {
+        viewModelScope.launch { settingsRepository.setLengthUnit(unit) }
     }
 
     fun setWindUnit(unit: WindUnit) {

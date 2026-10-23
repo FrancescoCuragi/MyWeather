@@ -190,7 +190,7 @@ private fun detailsOf(state: WeatherUiState.Success, settings: UserSettings): Li
         state.airQuality?.aqi?.let { Detail("Air quality", "$it", aqiNote(it)) },
         Detail("Humidity", "${c.humidity}%"),
         c.pressure?.let { Detail("Pressure", "${it.roundToInt()} hPa") },
-        c.visibility?.let { Detail("Visibility", "%.1f km".format(Locale.ROOT, it / 1000)) },
+        c.visibility?.let { Detail("Visibility", settings.distance(it)) },
         c.dewPoint?.let { Detail("Dew point", settings.temperature(it)) },
         Detail("Sunrise", settings.clock(LocalDateTime.parse(d.sunrise[0]))),
         Detail("Sunset", settings.clock(LocalDateTime.parse(d.sunset[0]))),
