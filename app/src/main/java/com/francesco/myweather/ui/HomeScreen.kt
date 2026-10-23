@@ -69,7 +69,12 @@ private fun ForecastContent(
 ) {
     val forecast = state.forecast
     var openDay by rememberSaveable { mutableIntStateOf(-1) }  // the expanded day in the list, or -1
-    PullToRefreshBox(isRefreshing = state.isRefreshing, onRefresh = onRefresh) {
+    val sky = skyFor(forecast.current.weatherCode, forecast.current.isDay == 1)
+    PullToRefreshBox(
+        isRefreshing = state.isRefreshing,
+        onRefresh = onRefresh,
+        modifier = Modifier.fillMaxSize().weatherBackground(sky),
+    ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),

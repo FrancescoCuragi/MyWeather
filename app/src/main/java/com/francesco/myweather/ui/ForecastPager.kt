@@ -42,6 +42,13 @@ fun ForecastPager(
 
     val pagerState = rememberPagerState { places.size }
 
+    // GPS usually answers a moment after launch and slots in as the first page. The pager would otherwise stay on
+    // whatever page was first when it started (a saved city), so jump to the current location when it appears.
+    val gpsKey = places.firstOrNull()?.takeIf { it.isCurrentLocation }?.key
+    LaunchedEffect(gpsKey) {
+        if (gpsKey != null && focusKey == null) pagerState.scrollToPage(0)
+    }
+
     LaunchedEffect(focusKey, places) {
         val index = places.indexOfFirst { it.key == focusKey }
         if (index >= 0) {
