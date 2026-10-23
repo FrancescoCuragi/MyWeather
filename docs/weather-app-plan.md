@@ -47,36 +47,36 @@
 ## 3. Feature Scope
 
 ### MVP (v1) — "Better than a stock weather app"
-- [ ] **Home screen**: current conditions, feels-like, hi/lo, short text summary
-- [ ] **Hourly strip** (48 h): temp, precip chance + amount, wind, icons
-- [ ] **Daily forecast** (14–16 days) with expandable detail
-- [ ] **Saved locations**: search, add, reorder, swipe between them
-- [ ] **GPS location** ("my location" as first card)
-- [ ] **Radar map**: animated past radar loop (RainViewer) on MapLibre
-- [ ] **Details panel**: UV, humidity, pressure, visibility, dew point, sunrise/sunset, moon phase, air quality
-- [ ] **Units & settings**: °C/°F, km/h / m/s / kt / Bft, mm/in, 24 h
-- [ ] **Dynamic theming**: Material You colours, dark mode, background reflecting conditions
-- [ ] **Offline cache**: last forecast shown instantly on launch
+- [x] **Home screen**: current conditions, feels-like, hi/lo, short text summary
+- [x] **Hourly strip** (48 h): temp, precip chance + amount, wind, icons
+- [x] **Daily forecast** (14–16 days) with expandable detail — tap a day for its hours
+- [x] **Saved locations**: search, add, reorder (↑/↓ buttons), swipe between them
+- [x] **GPS location** ("my location" as first card)
+- [x] **Radar map**: animated past radar loop (RainViewer) on MapLibre
+- [x] **Details panel**: UV, humidity, pressure, visibility, dew point, sunrise/sunset, moon phase, air quality
+- [x] **Units & settings**: °C/°F, km/h / m/s / kt / Bft, mm/in, m·km / ft·mi, 24 h
+- [~] **Dynamic theming**: Material You colours and dark mode done (the app is dark-only); background reflecting conditions not done
+- [x] **Offline cache**: last forecast shown instantly on launch
 
 ### v2 — "The Windy part"
-- [ ] **Full-screen weather map** with layer picker:
-  - Wind (animated particles 🌬️), gusts
-  - Temperature, feels-like
-  - Precipitation / rain & snow accumulation
-  - Clouds (low/mid/high/total), satellite
-  - Pressure (isobars), humidity, CAPE/thunderstorm risk
-  - Waves & swell (Open-Meteo Marine), snow depth, freezing level
-  - Air quality (PM2.5, ozone)
-  - Clear-air turbulence at cruise flight levels + jet stream ✈️
-- [ ] **Timeline scrubber** (play/pause through forecast hours)
-- [ ] **Tap anywhere** on the map → mini point forecast
-- [ ] **Model switcher**: ECMWF / ICON / GFS / AROME
-- [ ] **Model comparison** view (multiple models side by side for one location)
-- [ ] **Meteogram** chart (temp, precip, wind, pressure over time)
+- [~] **Full-screen weather map** with layer picker (hamburger menu, one layer at a time):
+  - ✅ Wind (animated particles 🌬️) at surface / 850 / 250 hPa; ❌ gusts
+  - ❌ Temperature, feels-like
+  - ✅ Precipitation rate, rain & snow, and 3 h / 24 h totals
+  - ✅ Clouds (low/mid/high/total), ✅ satellite (EUMETSAT MTG, Europe/Africa/Atlantic)
+  - ❌ Pressure (isobars), humidity, CAPE/thunderstorm risk
+  - ✅ Waves, swell and period (NOAA GFS-Wave); ❌ snow depth, freezing level
+  - ❌ Air quality map (the AQI number is in the forecast details)
+  - ✅ Clear-air turbulence at FL300 / 340 / 390 (Ellrod index); the jet stream is the 250 hPa wind layer (not yet overlaid on turbulence)
+- [x] **Timeline scrubber** (hourly, blends between the 3-hourly model steps) (play/pause through forecast hours)
+- [~] **Tap anywhere** on the map → readout of the layer's value there (not yet a full point forecast)
+- [ ] **Model switcher** for the map layers (only GFS is on the map; the comparison card covers the point forecast)
+- [x] **Model comparison** view (multiple models side by side for one location)
+- [x] **Meteogram** chart (temp, precip, wind, pressure over time)
 
 ### v3 — Nice-to-haves
-- [ ] Home-screen **widgets** (Glance) — **big widget wanted; build right after the MVP** (small/medium optional)
-- [ ] **Notifications**: rain starting soon, severe-weather warnings (MeteoAlarm), daily morning summary
+- [x] Home-screen **widget** (Glance) — big size done; small/medium optional
+- [x] **Notifications**: rain starting soon, severe-weather warnings (MeteoAlarm, Belgium only so far), daily morning summary
 - [ ] Wind/sounding/altitude views (pressure-level winds, temperature by altitude)
 - [ ] Favourite-spot "activity scores" (e.g. good for cycling / running)
 - [ ] Historical "this day last year" comparison
