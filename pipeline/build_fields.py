@@ -13,6 +13,8 @@ Layers written (each a folder of one PNG per forecast step, plus a shared meta.j
         0..255 = -1..1
     waves-period
         grayscale, 0..255 = 0..30 s
+    temp, feels, pressure, humidity, gusts, cape, snow, freezing   (single-number fields; see SCALARS)
+        0.5 degree; 16-bit values are RGB (red = high byte, green = low byte), the others grayscale
     rainacc-3h, rainacc-24h   (rain totals over the 3 / 24 hours ending at each step)
         grayscale, byte = sqrt(mm / max) * 255 with max 60 mm (3 h) and 150 mm (24 h); 0.5 degree
     cat-fl300, cat-fl340, cat-fl390   (clear-air turbulence, Ellrod index; see turbulence.py)
@@ -96,6 +98,39 @@ def encode_wave(height: np.ndarray, direction_from: np.ndarray) -> Image.Image:
 def encode_period(period: np.ndarray) -> Image.Image:
     gray = np.clip(np.rint(np.nan_to_num(period) / MAX_PERIOD_S * 255.0), 0, 255).astype(np.uint8)
     return Image.fromarray(gray, "L")
+
+
+# Single-number fields drawn as colours (and isobars for pressure). Each is stored as a PNG:
+#   bits 8:  grayscale, byte b -> value lo + (hi - lo) * b / 255            (enc "linear")
+#            or value hi * (b / 255) ** 2, which keeps detail near zero      (enc "sqrt")
+#   bits 16: RGB with red = high byte and green = low byte of lo + (hi - lo) * n / 65535
+SCALARS = {
+    # layer: (GRIB variable, GRIB level, conversion to the layer's unit, lo, hi, bits, enc, unit)
+    "temp": ("TMP", "2 m above ground", lambda a: a - 273.15, -60.0, 50.0, 16, "linear", "°C"),
+    "feels": ("APTMP", "2 m above ground", lambda a: a - 273.15, -60.0, 50.0, 16, "linear", "°C"),
+    "pressure": ("PRMSL", "mean sea level", lambda a: a / 100.0, 920.0, 1080.0, 16, "linear", "hPa"),
+    "humidity": ("RH", "2 m above ground", lambda a: a, 0.0, 100.0, 8, "linear", "%"),
+    "gusts": ("GUST", "surface", lambda a: a, 0.0, 60.0, 8, "linear", "m/s"),
+    "cape": ("CAPE", "surface", lambda a: a, 0.0, 5000.0, 8, "linear", "J/kg"),
+    "snow": ("SNOD", "surface", lambda a: a, 0.0, 3.0, 8, "sqrt", "m"),
+    "freezing": ("HGT", "0C isotherm", lambda a: a, 0.0, 6000.0, 8, "linear", "m"),
+}
+SCALAR_DOWNSAMPLE = 2
+
+
+def encode_scalar(values: np.ndarray, lo: float, hi: float, bits: int, enc: str) -> Image.Image:
+    values = np.nan_to_num(values[::SCALAR_DOWNSAMPLE, ::SCALAR_DOWNSAMPLE], nan=lo)
+    if enc == "sqrt":
+        unit = np.sqrt(np.clip((values - lo) / (hi - lo), 0.0, 1.0))
+    else:
+        unit = np.clip((values - lo) / (hi - lo), 0.0, 1.0)
+    if bits == 16:
+        n = np.rint(unit * 65535.0).astype(np.uint32)
+        rgb = np.zeros((*n.shape, 3), dtype=np.uint8)
+        rgb[..., 0] = n >> 8
+        rgb[..., 1] = n & 255
+        return Image.fromarray(rgb, "RGB")
+    return Image.fromarray(np.rint(unit * 255.0).astype(np.uint8), "L")
 
 
 ACCUMULATIONS = {
@@ -183,6 +218,10 @@ def build_step(run: dt.datetime, step: int, out_dir: Path, work_dir: Path) -> in
     snow = gfs.fetch_field(url, index, "CSNOW", "surface", tmp / "csnow.grib2")
     save("precip", encode_precip(prate, snow))
 
+    for layer, (variable, level, convert, lo, hi, bits, enc, _) in SCALARS.items():
+        field = gfs.fetch_field(url, index, variable, level, tmp / f"{layer}.grib2")
+        save(layer, encode_scalar(convert(field), lo, hi, bits, enc))
+
     wave_file = gfs.wave_url(run, step)
     wave_index = gfs.read_index(wave_file)
 
@@ -237,6 +276,8 @@ def main() -> None:
     layers["waves-height"] = {"kind": "wave", "maxHeight": MAX_WAVE_M}
     layers["waves-swell"] = {"kind": "wave", "maxHeight": MAX_WAVE_M}
     layers["waves-period"] = {"kind": "period", "maxPeriod": MAX_PERIOD_S}
+    for name, (_, _, _, lo, hi, bits, enc, unit) in SCALARS.items():
+        layers[name] = {"kind": "scalar", "min": lo, "max": hi, "bits": bits, "enc": enc, "unit": unit}
     for name, (window, max_mm) in ACCUMULATIONS.items():
         layers[name] = {"kind": "rainacc", "hours": window, "maxMm": max_mm}
     for flight_level in turbulence.FLIGHT_LEVELS:
