@@ -69,11 +69,17 @@ def read_index(url: str) -> list[tuple[str, int, int | None]]:
     ]
 
 
-def fetch_field(url: str, index, variable: str, level: str, dest: Path) -> np.ndarray:
-    """Download one field and return it as a 2-D float32 array (lat 90 -> -90, lon 0 -> 360)."""
+def fetch_field(url: str, index, variable: str, level: str, dest: Path, record: str = "instant") -> np.ndarray:
+    """Download one field and return it as a 2-D float32 array (lat 90 -> -90, lon 0 -> 360).
+
+    record="instant" picks the value valid at the step itself. record="cumulative" picks the last record of the
+    field, which for accumulations such as APCP is the total since the start of the run.
+    """
     pattern = re.compile(rf"^{re.escape(variable)}:{re.escape(level)}:")
     matches = [(key, s, e) for key, s, e in index if pattern.match(key)]
-    if len(matches) > 1:
+    if record == "cumulative":
+        matches = matches[-1:]
+    elif len(matches) > 1:
         # Fields like cloud cover and precipitation also come as 3-hour averages and accumulations;
         # we want the value valid at the step itself ("anl" for step 0, "N hour fcst" otherwise).
         matches = [m for m in matches if re.fullmatch(r"anl|\d+ hour fcst", m[0].split(":", 2)[2])]

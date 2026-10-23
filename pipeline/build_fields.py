@@ -13,6 +13,8 @@ Layers written (each a folder of one PNG per forecast step, plus a shared meta.j
         0..255 = -1..1
     waves-period
         grayscale, 0..255 = 0..30 s
+    rainacc-3h, rainacc-24h   (rain totals over the 3 / 24 hours ending at each step)
+        grayscale, byte = sqrt(mm / max) * 255 with max 60 mm (3 h) and 150 mm (24 h); 0.5 degree
     cat-fl300, cat-fl340, cat-fl390   (clear-air turbulence, Ellrod index; see turbulence.py)
         grayscale, 0..255 = 0..20 (1e-7 s^-2); about 4 is light, 8 moderate, 12 severe
 
@@ -96,6 +98,70 @@ def encode_period(period: np.ndarray) -> Image.Image:
     return Image.fromarray(gray, "L")
 
 
+ACCUMULATIONS = {
+    # layer name: (window in hours, mm at the top of the texture range)
+    "rainacc-3h": (3, 60.0),
+    "rainacc-24h": (24, 150.0),
+}
+ACCUMULATION_DOWNSAMPLE = 2
+
+
+def encode_accumulation(mm: np.ndarray, max_mm: float) -> Image.Image:
+    """Grayscale, sqrt-encoded so light totals keep detail: byte = sqrt(mm / max) * 255."""
+    gray = np.clip(np.rint(np.sqrt(np.clip(mm, 0, None) / max_mm) * 255.0), 0, 255).astype(np.uint8)
+    return Image.fromarray(gray, "L")
+
+
+def cumulative_rain(run: dt.datetime, step: int, work_dir: Path) -> np.ndarray:
+    """Total rain (mm) from the start of `run` to `step`, already thinned to the accumulation texture grid."""
+    if step == 0:
+        return np.zeros((361, 720), dtype=np.float32)  # nothing has fallen yet at the start of a run
+    url = gfs.file_url(run, step)
+    field = gfs.fetch_field(url, gfs.read_index(url), "APCP", "surface", work_dir / f"{run:%Y%m%d%H}_f{step:03d}.grib2",
+                            record="cumulative")
+    return np.nan_to_num(field)[::ACCUMULATION_DOWNSAMPLE, ::ACCUMULATION_DOWNSAMPLE]
+
+
+def build_accumulations(run: dt.datetime, steps: list[int], out_dir: Path, work_dir: Path) -> int:
+    """Rain totals over the 3 and 24 hours ending at every step.
+
+    GFS only publishes running totals since the start of the run, so a window is a difference of two of them. For the
+    first hours of a run the window reaches back before it started; those come from the run 24 hours earlier.
+    """
+    previous = run - dt.timedelta(hours=24)
+    try:
+        has_previous = gfs._session.head(gfs.file_url(previous, 45) + ".idx", timeout=30).status_code == 200
+    except Exception:
+        has_previous = False
+    longest = max(window for window, _ in ACCUMULATIONS.values())
+
+    needed = {(run, s) for s in steps} | {(run, s - w) for s in steps for w, _ in ACCUMULATIONS.values() if s - w >= 0}
+    if has_previous:
+        for s in steps:
+            for w, _ in ACCUMULATIONS.values():
+                if s - w < 0:  # the window began before this run: both ends come from the earlier run
+                    needed |= {(previous, 24 + s), (previous, 24 + s - w)}
+    with ThreadPoolExecutor(WORKERS) as pool:
+        keys = sorted(needed)
+        totals = dict(zip(keys, pool.map(lambda k: cumulative_rain(k[0], k[1], work_dir), keys)))
+
+    written = 0
+    for layer, (window, max_mm) in ACCUMULATIONS.items():
+        for step in steps:
+            start = step - window
+            if start >= 0:
+                mm = totals[(run, step)] - totals[(run, start)]
+            elif has_previous:
+                mm = totals[(previous, 24 + step)] - totals[(previous, 24 + start)]
+            else:
+                mm = totals[(run, step)]  # best effort: only the time since the run began
+            target = out_dir / layer / f"f{step:03d}.png"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            encode_accumulation(mm, max_mm).save(target, optimize=True)
+            written += target.stat().st_size
+    return written
+
+
 def build_step(run: dt.datetime, step: int, out_dir: Path, work_dir: Path) -> int:
     """Download every field for one forecast step and write all of that step's PNGs."""
     url = gfs.file_url(run, step)
@@ -163,13 +229,16 @@ def main() -> None:
     shutil.rmtree(staging, ignore_errors=True)
     with ThreadPoolExecutor(WORKERS) as pool:
         sizes = list(pool.map(lambda s: build_step(run, s, staging, args.work), args.steps))
-    print(f"{len(sizes)} steps, {sum(sizes) / 1e6:.1f} MB total")
+    acc_bytes = build_accumulations(run, args.steps, staging, args.work)
+    print(f"{len(sizes)} steps, {(sum(sizes) + acc_bytes) / 1e6:.1f} MB total")
 
     layers = {name: {"kind": "cloud"} for name in CLOUDS}
     layers["precip"] = {"kind": "precip", "maxRate": MAX_RATE_MM_H}
     layers["waves-height"] = {"kind": "wave", "maxHeight": MAX_WAVE_M}
     layers["waves-swell"] = {"kind": "wave", "maxHeight": MAX_WAVE_M}
     layers["waves-period"] = {"kind": "period", "maxPeriod": MAX_PERIOD_S}
+    for name, (window, max_mm) in ACCUMULATIONS.items():
+        layers[name] = {"kind": "rainacc", "hours": window, "maxMm": max_mm}
     for flight_level in turbulence.FLIGHT_LEVELS:
         layers[f"cat-{flight_level}"] = {"kind": "turbulence", "maxIndex": MAX_TURBULENCE}
     meta = {
