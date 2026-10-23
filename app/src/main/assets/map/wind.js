@@ -8,6 +8,8 @@
  *   precip  red = sqrt(rain rate / 50 mm/h) * 255, green = snow fraction * 255
  *   wave    red = height (0..16 m), green/blue = east/north unit vector of the direction the waves travel
  *   period  grayscale, 0..255 = 0..30 s
+ *   scalar  one number per cell (temperature, pressure, ...): grayscale, or RGB with red = high byte and
+ *           green = low byte for 16-bit layers; meta.json gives the min, max, bits and encoding
  *   rainacc  grayscale, byte = sqrt(mm / maxMm) * 255: rain total over the past 3 or 24 hours
  *   turbulence  grayscale, 0..255 = Ellrod index 0..20 (1e-7 s^-2): ~4 light, ~8 moderate, ~12 severe
  */
@@ -19,7 +21,17 @@
   var MAX_RAIN_RATE = 50;       // mm/h at the top of the precip texture range
 
   /** Which published folder and which kind of data each layer name (the texture subfolder) uses. */
+  var SCALAR_LEVELS = { temp: 1, feels: 1, pressure: 1, humidity: 1, gusts: 1, cape: 1, snow: 1, freezing: 1 };
+
+  /** Wind layer drawn as moving particles on top of a colour layer, when that makes it easier to read. */
+  function overlayFor(level) {
+    if (level.indexOf('cat-') === 0) return '250mb';  // turbulence clusters around the jet stream
+    if (level === 'gusts') return 'surface';
+    return null;
+  }
+
   function layerInfo(level) {
+    if (SCALAR_LEVELS[level]) return { base: 'fields', kind: 'scalar' };
     if (level.indexOf('clouds-') === 0) return { base: 'fields', kind: 'cloud' };
     if (level === 'precip') return { base: 'fields', kind: 'precip' };
     if (level === 'waves-period') return { base: 'fields', kind: 'period' };
@@ -90,6 +102,53 @@
   }
   var ACC_LUTS = {};  // by maxMm, built when a layer first needs it
 
+  // Colour scales for the single-number layers, as [value, r, g, b] stops in the layer's own unit.
+  var SCALAR_PALETTES = {
+    temp: [[-40, 150, 60, 200], [-30, 90, 90, 220], [-20, 60, 130, 235], [-10, 80, 190, 240], [0, 150, 230, 235],
+           [5, 110, 215, 150], [10, 170, 225, 90], [15, 235, 230, 80], [20, 250, 190, 60], [25, 250, 140, 50],
+           [30, 240, 90, 60], [38, 200, 40, 90], [46, 140, 30, 110]],
+    pressure: [[960, 120, 60, 190], [985, 70, 110, 220], [1000, 70, 190, 220], [1013, 110, 210, 130],
+               [1025, 240, 220, 90], [1040, 245, 150, 70], [1055, 220, 70, 100]],
+    humidity: [[0, 190, 120, 50], [30, 220, 190, 90], [55, 120, 200, 130], [75, 60, 170, 200], [100, 50, 90, 210]],
+    gusts: [[0, 60, 90, 200], [8, 40, 170, 200], [16, 60, 200, 120], [24, 240, 220, 60], [32, 240, 120, 40], [40, 200, 40, 140]],
+    cape: [[100, 250, 240, 150], [500, 250, 220, 70], [1000, 250, 160, 50], [2000, 240, 90, 50], [3000, 220, 40, 110], [4500, 160, 40, 190]],
+    snow: [[0.01, 190, 215, 255], [0.1, 230, 240, 255], [0.5, 255, 255, 255], [1.5, 220, 200, 255], [3, 190, 150, 255]],
+    freezing: [[0, 120, 60, 200], [500, 70, 120, 230], [1500, 70, 200, 220], [2500, 110, 215, 120], [3500, 240, 220, 80],
+               [4500, 245, 150, 60], [5500, 230, 70, 70]]
+  };
+  SCALAR_PALETTES.feels = SCALAR_PALETTES.temp;
+
+  // Opacity by value: the map must stay readable underneath, so most layers are a translucent tint.
+  var SCALAR_ALPHA = {
+    temp: function () { return 125; }, feels: function () { return 125; },
+    pressure: function () { return 85; }, humidity: function () { return 105; }, freezing: function () { return 110; },
+    gusts: function (v) { return 22 + 75 * Math.min(1, v / 40); },
+    cape: function (v) { return v < 80 ? 0 : Math.min(160, 30 + (v - 80) * 0.12); },
+    snow: function (v) { return v < 0.005 ? 0 : Math.min(190, 80 + (v - 0.005) * 1500); }
+  };
+
+  // What each legend spans (and whether it is spaced by square root, for layers where small values matter most).
+  var SCALAR_LEGEND = {
+    temp: { lo: -40, hi: 45 }, feels: { lo: -40, hi: 45 }, pressure: { lo: 960, hi: 1050 }, humidity: { lo: 0, hi: 100 },
+    gusts: { lo: 0, hi: 40 }, cape: { lo: 0, hi: 4000 }, snow: { lo: 0, hi: 2, sqrt: true }, freezing: { lo: 0, hi: 5500 }
+  };
+
+  var SCALAR_LUTS = {};  // by layer name; 1024 colours spread evenly over the layer's data range
+
+  function scalarLut(level, spec) {
+    if (SCALAR_LUTS[level]) return SCALAR_LUTS[level];
+    var stops = SCALAR_PALETTES[level], alphaOf = SCALAR_ALPHA[level], n = 1024;
+    var lut = new Uint8ClampedArray(n * 4);
+    for (var i = 0; i < n; i++) {
+      var v = spec.min + (spec.max - spec.min) * i / (n - 1), s = 1;
+      while (s < stops.length - 1 && stops[s][0] < v) s++;
+      var a = stops[s - 1], b = stops[s], t = Math.max(0, Math.min(1, (v - a[0]) / (b[0] - a[0])));
+      for (var c = 0; c < 3; c++) lut[i * 4 + c] = a[c + 1] + (b[c + 1] - a[c + 1]) * t;
+      lut[i * 4 + 3] = alphaOf(v);
+    }
+    return (SCALAR_LUTS[level] = lut);
+  }
+
   var MAX_WAVE_M = 16, MAX_PERIOD_S = 30, MAX_TURBULENCE = 20;
   var WAVE_STOPS = [[0, 25, 40, 120], [1, 45, 90, 200], [2, 60, 150, 230], [3.5, 100, 185, 235], [5, 160, 210, 245],
                     [7, 230, 190, 235], [10, 235, 120, 190], [14, 190, 60, 170]];
@@ -131,7 +190,9 @@
   function WindLayer(map, host) {
     this.map = map;
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.units = { wind: 'KmH', precip: 'Millimetres', length: 'Metric' };  // set by the page from the app's settings
+    this.units = { wind: 'KmH', precip: 'Millimetres', length: 'Metric', temp: 'Celsius' };
+    this.overlayLevel = null;   // wind layer drawn as particles over this layer, if any
+    this.overlayFrame = null;  // set by the page from the app's settings
     this.meta = null;
     this.metas = {};            // base folder -> loaded meta.json
     this.metaPromises = {};
@@ -211,6 +272,8 @@
       self.meta = meta;
       self.requested++;          // drop any frame still loading for the previous layer
       self.frame = null;
+      self.overlayLevel = overlayFor(level);
+      self.overlayFrame = null;
       self.hctx.clearRect(0, 0, self.heat.width, self.heat.height);
       self.pctx.clearRect(0, 0, self.w, self.h);
       self.applyKind();
@@ -219,7 +282,9 @@
 
   /** Particles only make sense for wind; the other layers are colour fields. */
   WindLayer.prototype.applyKind = function () {
-    this.parts.style.display = this.active && (this.kind === 'wind' || this.kind === 'wave') ? 'block' : 'none';
+    var drawsOnParts = this.kind === 'wind' || this.kind === 'wave' || !!this.overlayLevel ||
+      (this.kind === 'scalar' && this.level === 'pressure');  // particles, crests, or isobars
+    this.parts.style.display = this.active && drawsOnParts ? 'block' : 'none';
   };
 
   /** Timeline hour closest to a wall-clock time (ms), within the loaded forecast. */
@@ -259,12 +324,13 @@
   WindLayer.prototype.loadFrame = function (level, index) {
     var key = level + '/' + index;
     if (this.cache[key]) return this.cache[key];
-    var step = this.meta.steps[index];
     var info = layerInfo(level);
+    var meta = this.metas[info.base] || this.meta;  // an overlay can come from a different published folder
+    var step = meta.steps[index];
     var url = SITE + info.base + '/' + level + '/f' + ('00' + step).slice(-3) + '.png';
     // sample() turns channel byte b into b * scale[channel] + offset[channel]: m/s for wind, metres and a unit
     // vector for waves, seconds for the period, and plain 0..1 values for the rest.
-    var scale, offset, spec = this.meta.levels[level];
+    var scale, offset, spec = meta.levels[level];
     if (info.kind === 'wind') {
       var w = 2 * spec.maxSpeed / 255;
       scale = [w, w, w]; offset = [-spec.maxSpeed, -spec.maxSpeed, -spec.maxSpeed];
@@ -274,6 +340,9 @@
       scale = [spec.maxPeriod / 255, 0, 0]; offset = [0, 0, 0];
     } else if (info.kind === 'turbulence') {
       scale = [spec.maxIndex / 255, 0, 0]; offset = [0, 0, 0];
+    } else if (info.kind === 'scalar') {
+      // 16-bit layers keep the high byte in red and the low byte in green; both are read raw and combined later
+      scale = spec.bits === 16 ? [1, 1, 0] : [1, 0, 0]; offset = [0, 0, 0];
     } else if (info.kind === 'rainacc') {
       scale = [1 / 255, 0, 0]; offset = [0, 0, 0];  // the square of this times maxMm is the total in mm
     } else {
@@ -318,6 +387,14 @@
    * {u, v} in m/s for wind; {u: cloud 0..1} for clouds; {u: rain rate 0..1 (sqrt-encoded), v: snow fraction};
    * {u: height m, v: east, w: north} for waves; {u: seconds} for the wave period.
    */
+  /** Turns a sample of a scalar layer into its real value (degrees, hPa, ...). */
+  WindLayer.prototype.scalarValue = function (out) {
+    var spec = this.meta.levels[this.level];
+    var raw = spec.bits === 16 ? (out[0] * 256 + out[1]) / 65535 : out[0] / 255;
+    if (spec.enc === 'sqrt') raw = raw * raw;
+    return spec.min + raw * (spec.max - spec.min);
+  };
+
   /** The mm at the top of the current rain-total layer's range. */
   WindLayer.prototype.accMax = function () { return this.meta.levels[this.level].maxMm; };
 
@@ -355,11 +432,18 @@
 
   /** Shows forecast step index i once its texture is available. Resolves when drawn. */
   WindLayer.prototype.setStep = function (index) {
-    var self = this, ticket = ++this.requested, br = this.bracket(index);
+    var self = this, ticket = ++this.requested, br = this.bracket(index), overlay = this.overlayLevel;
     this.step = index;
-    return Promise.all([this.loadFrame(this.level, br.a), this.loadFrame(this.level, br.b)]).then(function (pair) {
+    var jobs = [this.loadFrame(this.level, br.a), this.loadFrame(this.level, br.b)];
+    if (overlay) {
+      jobs.push(this.loadMeta('wind').then(function () {
+        return Promise.all([self.loadFrame(overlay, br.a), self.loadFrame(overlay, br.b)]);
+      }));
+    }
+    return Promise.all(jobs).then(function (loaded) {
       if (ticket !== self.requested) return;  // a newer request superseded this one
-      self.frame = { a: pair[0], b: pair[1], t: br.t };
+      self.frame = { a: loaded[0], b: loaded[1], t: br.t };
+      self.overlayFrame = overlay ? { a: loaded[2][0], b: loaded[2][1], t: br.t } : null;
       self.drawHeat();
     });
   };
@@ -368,7 +452,10 @@
   WindLayer.prototype.prefetch = function (index) {
     if (index < 0 || index >= this.hourCount()) return;
     var br = this.bracket(index), self = this;
-    [br.a, br.b].forEach(function (k) { self.loadFrame(self.level, k).catch(function () {}); });
+    [br.a, br.b].forEach(function (k) {
+      self.loadFrame(self.level, k).catch(function () {});
+      if (self.overlayLevel && self.metas.wind) self.loadFrame(self.overlayLevel, k).catch(function () {});
+    });
   };
 
   WindLayer.prototype.show = function () {
@@ -403,6 +490,7 @@
         labels: [{ pos: 0, text: '0%' }, { pos: 1, text: '100% cloud cover' }]
       };
     }
+    if (this.kind === 'scalar') return this.scalarLegend();
     if (this.kind === 'rainacc') {
       var maxMm = this.meta.levels[this.level].maxMm, lut = ACC_LUTS[maxMm] || (ACC_LUTS[maxMm] = buildAccLut(maxMm));
       for (i = 0; i <= 10; i++) stops.push(rgb(lut, Math.round(i / 10 * 255) * 4));
@@ -450,6 +538,49 @@
     return {
       gradient: 'linear-gradient(to right,' + stops.join(',') + ')',
       labels: [{ pos: 0, text: '0' }, { pos: 1, text: windTopLabel(max, this.units.wind) }]
+    };
+  };
+
+  /** Legend for a single-number layer, with marks in the user's units. */
+  WindLayer.prototype.scalarLegend = function () {
+    var level = this.level, spec = this.meta.levels[level], lut = scalarLut(level, spec), range = SCALAR_LEGEND[level];
+    var u = this.units, stops = [], i;
+    for (i = 0; i <= 10; i++) {
+      var p = i / 10, v = range.lo + (range.hi - range.lo) * (range.sqrt ? p * p : p);
+      var k = Math.round((v - spec.min) / (spec.max - spec.min) * 1023) * 4;
+      stops.push('rgb(' + lut[k] + ',' + lut[k + 1] + ',' + lut[k + 2] + ')');
+    }
+    // marks as [value in the layer's unit, text]; the last text carries the unit
+    var marks;
+    var fahrenheit = u.temp === 'Fahrenheit', imperial = u.length === 'Imperial', inch = u.precip === 'Inches';
+    if (level === 'temp' || level === 'feels') {
+      marks = fahrenheit
+        ? [[-40, '-40'], [-17.8, '0'], [0, '32'], [21.1, '70'], [37.8, '100°F']]
+        : [[-40, '-40'], [-20, '-20'], [0, '0'], [20, '20'], [40, '40°C']];
+    } else if (level === 'pressure') {
+      marks = [[960, '960'], [985, '985'], [1010, '1010'], [1030, '1030'], [1050, '1050 hPa']];
+    } else if (level === 'humidity') {
+      marks = [[0, '0'], [25, '25'], [50, '50'], [75, '75'], [100, '100%']];
+    } else if (level === 'gusts') {
+      marks = u.wind === 'Ms' ? [[0, '0'], [10, '10'], [20, '20'], [30, '30'], [40, '40 m/s']]
+        : u.wind === 'Knots' ? [[0, '0'], [10.3, '20'], [20.6, '40'], [30.9, '60'], [38.9, '75 kt']]
+        : u.wind === 'Beaufort' ? [[0, '0'], [6.7, '4'], [12.2, '6'], [18.9, '8'], [26.4, '10 Bft']]
+        : [[0, '0'], [8.3, '30'], [16.7, '60'], [25, '90'], [33.3, '120 km/h']];
+    } else if (level === 'cape') {
+      marks = [[0, '0'], [500, '500'], [1000, '1000'], [2000, '2000'], [4000, '4000 J/kg']];
+    } else if (level === 'snow') {
+      marks = inch ? [[0.0254, '1'], [0.1016, '4'], [0.508, '20'], [1.016, '40'], [2, '80 in']]
+        : [[0.02, '2'], [0.1, '10'], [0.5, '50'], [1, '100'], [2, '200 cm']];
+    } else {  // freezing level
+      marks = imperial ? [[0, '0'], [1524, '5000'], [3048, '10000'], [4572, '15000'], [5500, '18000 ft']]
+        : [[0, '0'], [1000, '1000'], [2000, '2000'], [3000, '3000'], [5000, '5000 m']];
+    }
+    return {
+      gradient: 'linear-gradient(to right,' + stops.join(',') + ')',
+      labels: marks.map(function (m) {
+        var f = (m[0] - range.lo) / (range.hi - range.lo);
+        return { pos: range.sqrt ? Math.sqrt(Math.max(0, f)) : f, text: m[1] };
+      })
     };
   };
 
@@ -511,6 +642,8 @@
     var f = this.frame, map = this.map, out = this.sampleOut;
     var img = this.heatImage, px = img.data, cw = this.heat.width, ch = this.heat.height;
     var colorMax = COLOR_MAX[this.level], kind = this.kind;
+    var scalarSpec = kind === 'scalar' ? this.meta.levels[this.level] : null;
+    var scalarTable = scalarSpec ? scalarLut(this.level, scalarSpec) : null;
     var seaOnly = kind === 'wave' || kind === 'period';
     var mask = seaOnly ? this.updateMask() : null;
     if (!seaOnly) this.maskData = null;
@@ -523,6 +656,10 @@
           var cover = Math.max(0, Math.min(1, out[0]));
           px[o] = CLOUD_RGB[0]; px[o + 1] = CLOUD_RGB[1]; px[o + 2] = CLOUD_RGB[2];
           px[o + 3] = Math.pow(cover, 1.6) * 115;  // thin cloud barely shows, full overcast stays see-through
+        } else if (kind === 'scalar') {
+          var sv = this.scalarValue(out);
+          var si = Math.max(0, Math.min(1023, Math.round((sv - scalarSpec.min) / (scalarSpec.max - scalarSpec.min) * 1023))) * 4;
+          px[o] = scalarTable[si]; px[o + 1] = scalarTable[si + 1]; px[o + 2] = scalarTable[si + 2]; px[o + 3] = scalarTable[si + 3];
         } else if (kind === 'rainacc') {
           var accMax = this.meta.levels[this.level].maxMm;
           var accLut = ACC_LUTS[accMax] || (ACC_LUTS[accMax] = buildAccLut(accMax));
@@ -546,6 +683,65 @@
       }
     }
     this.hctx.putImageData(img, 0, 0);
+    if (kind === 'scalar' && this.level === 'pressure') this.drawIsobars();
+  };
+
+  /**
+   * Isobars: lines of equal sea-level pressure every 4 hPa, found with marching squares on a coarse grid of
+   * screen points, labelled sparsely. Drawn on the particle canvas, at full sharpness.
+   */
+  WindLayer.prototype.drawIsobars = function () {
+    var f = this.frame, map = this.map, ctx = this.pctx, out = this.sampleOut, w = this.w, h = this.h;
+    ctx.clearRect(0, 0, w, h);
+    if (!f) return;
+    var G = 12, nx = Math.ceil(w / G) + 1, ny = Math.ceil(h / G) + 1;
+    var v = new Float32Array(nx * ny), ok = new Uint8Array(nx * ny), lo = Infinity, hi = -Infinity;
+    for (var gy = 0; gy < ny; gy++) {
+      for (var gx = 0; gx < nx; gx++) {
+        var p = map.unproject([gx * G, gy * G]), i = gy * nx + gx;
+        if (this.sampleWind(f, p.lng, p.lat, out)) {
+          var val = this.scalarValue(out);
+          v[i] = val; ok[i] = 1;
+          if (val < lo) lo = val;
+          if (val > hi) hi = val;
+        }
+      }
+    }
+    if (lo > hi) return;
+    ctx.lineJoin = 'round'; ctx.font = '600 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (var level = Math.ceil(lo / 4) * 4; level <= hi; level += 4) {
+      var major = level % 20 === 0;
+      ctx.strokeStyle = major ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = major ? 1.6 : 0.9;
+      ctx.beginPath();
+      var labels = [];
+      for (var cy = 0; cy < ny - 1; cy++) {
+        for (var cx = 0; cx < nx - 1; cx++) {
+          var i00 = cy * nx + cx, i10 = i00 + 1, i01 = i00 + nx, i11 = i01 + 1;
+          if (!(ok[i00] && ok[i10] && ok[i01] && ok[i11])) continue;
+          var a = v[i00], b = v[i10], c = v[i11], d = v[i01];  // top-left, top-right, bottom-right, bottom-left
+          var code = (a > level ? 8 : 0) | (b > level ? 4 : 0) | (c > level ? 2 : 0) | (d > level ? 1 : 0);
+          if (code === 0 || code === 15) continue;
+          var x0 = cx * G, y0 = cy * G;
+          var top = [x0 + G * (level - a) / (b - a), y0], right = [x0 + G, y0 + G * (level - b) / (c - b)];
+          var bottom = [x0 + G * (level - d) / (c - d), y0 + G], left = [x0, y0 + G * (level - a) / (d - a)];
+          var segs = [null, [left, bottom], [bottom, right], [left, right], [top, right], [top, right, left, bottom],
+                      [top, bottom], [top, left], [top, left], [top, bottom], [top, left, bottom, right],
+                      [top, right], [left, right], [bottom, right], [left, bottom]][code];
+          for (var s = 0; s < segs.length; s += 2) {
+            ctx.moveTo(segs[s][0], segs[s][1]); ctx.lineTo(segs[s + 1][0], segs[s + 1][1]);
+          }
+          var mx = (segs[0][0] + segs[1][0]) / 2, my = (segs[0][1] + segs[1][1]) / 2;
+          if (mx > 20 && mx < w - 20 && my > 20 && my < h - 20 &&
+              labels.every(function (l) { return Math.abs(l[0] - mx) + Math.abs(l[1] - my) > 170; })) labels.push([mx, my]);
+        }
+      }
+      ctx.stroke();
+      labels.forEach(function (l) {
+        ctx.strokeStyle = 'rgba(15,20,32,0.85)'; ctx.lineWidth = 3; ctx.strokeText(String(level), l[0], l[1]);
+        ctx.fillStyle = '#fff'; ctx.fillText(String(level), l[0], l[1]);
+      });
+    }
   };
 
   WindLayer.prototype.respawn = function (i) {
@@ -560,14 +756,16 @@
   WindLayer.prototype.reseedAll = function () {
     this.pctx.clearRect(0, 0, this.w, this.h);
     for (var i = 0; i < this.count; i++) this.respawn(i);
+    if (this.kind === 'scalar' && this.level === 'pressure') this.drawIsobars();
   };
 
   WindLayer.prototype.tick = function () {
     if (!this.active) return;
     this.raf = requestAnimationFrame(this.loop);
-    var map = this.map, f = this.frame;
-    var kind = this.kind;
-    if (!f || (kind !== 'wind' && kind !== 'wave') || map.isMoving() || document.hidden) return;
+    var map = this.map, kind = this.kind;
+    // Wind layers move their own particles; gusts and turbulence show surface or jet-stream wind over their colours.
+    var f = kind === 'wind' || kind === 'wave' ? this.frame : this.overlayFrame;
+    if (!f || !(kind === 'wind' || kind === 'wave' || this.overlayLevel) || map.isMoving() || document.hidden) return;
 
     if (kind === 'wave') { this.tickWaves(f); return; }
 
@@ -576,15 +774,18 @@
     ctx.fillStyle = 'rgba(0,0,0,' + FADE + ')';
     ctx.fillRect(0, 0, w, h);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    // Over another colour layer (gusts, turbulence) the particles are a hint, not the subject: fewer and fainter.
+    var overlay = kind !== 'wind';
+    ctx.strokeStyle = overlay ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.6)';
     ctx.lineWidth = 0.9;
     ctx.beginPath();
 
     var degPerPx = 360 / (512 * Math.pow(2, map.getZoom()));
-    for (var i = 0; i < this.count; i++) {
+    var n = overlay ? Math.round(this.count * 0.4) : this.count;
+    for (var i = 0; i < n; i++) {
       if (++this.age[i] > MAX_AGE || !this.sampleWind(f, this.lon[i], this.lat[i], out)) { this.respawn(i); continue; }
       var cos = Math.cos(this.lat[i] * Math.PI / 180), ux, uy;  // css pixels per frame, east and north
-      if (kind === 'wind') {
+      if (kind !== 'wave') {
         ux = out[0] * PIXELS_PER_MS; uy = out[1] * PIXELS_PER_MS;
       } else {
         // Waves: a unit direction vector; a vanishing one means land or the coast edge, so start over elsewhere.

@@ -76,7 +76,7 @@ fun MapScreen(center: Place?, units: UserSettings) {
 
 private fun WebView.applyUnits(units: UserSettings) {
     evaluateJavascript(
-        "window.setUnits && setUnits('${units.windUnit.name}', '${units.precipitationUnit.name}', '${units.lengthUnit.name}')",
+        "window.setUnits && setUnits('${units.windUnit.name}', '${units.precipitationUnit.name}', '${units.lengthUnit.name}', '${units.temperatureUnit.name}')",
         null,
     )
 }

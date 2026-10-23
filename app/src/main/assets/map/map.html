@@ -28,7 +28,12 @@
     }
     #menu .backdrop { flex: 1; background: rgba(0, 0, 0, 0.45); }
     #menu h2 { font-size: 20px; margin: 4px 8px 6px; font-weight: 500; }
-    #menu .group { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #9aa0b8; margin: 18px 8px 4px; }
+    #menu .group {
+      display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box;
+      border: 0; background: none; font: inherit; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: #9aa0b8; padding: 14px 12px 8px; text-align: left;
+    }
+    #menu .group.open { color: #e6e8f0; }
     #menu .item {
       display: block; width: 100%; border: 0; background: none; color: #e6e8f0; font: inherit;
       padding: 12px; border-radius: 12px; text-align: left;
@@ -305,13 +310,19 @@
 
     // Each mode that draws from the weather textures: its level chips as [texture folder, label].
     var FIELD_MODES = {
-      wind: [['surface', 'Surface'], ['850mb', '850 hPa'], ['250mb', '250 hPa · jet']],
+      wind: [['surface', 'Surface'], ['gusts', 'Gusts'], ['850mb', '850 hPa'], ['250mb', '250 hPa · jet']],
+      temperature: [['temp', 'Air temperature', 'Air'], ['feels', 'Feels like', 'Feels like'],
+                    ['freezing', 'Freezing level · where it is 0°', 'Freezing level']],
+      air: [['pressure', 'Sea-level pressure · isobars', 'Pressure'], ['humidity', 'Humidity', 'Humidity']],
+      storms: [['cape', 'Storm energy (CAPE)']],
+      snow: [['snow', 'Snow depth']],
       clouds: [['clouds-total', 'Total'], ['clouds-low', 'Low'], ['clouds-mid', 'Mid'], ['clouds-high', 'High']],
       rain: [['precip', 'Rain rate', 'Rate'], ['rainacc-3h', 'Rain total · past 3 hours', '3 h'], ['rainacc-24h', 'Rain total · past 24 hours', '24 h']],
       waves: [['waves-height', 'Wave height'], ['waves-swell', 'Swell'], ['waves-period', 'Wave period']],
       turbulence: [['cat-fl300', 'FL300 · 9.1 km', 'FL300'], ['cat-fl340', 'FL340 · 10.4 km', 'FL340'], ['cat-fl390', 'FL390 · 11.9 km', 'FL390']]
     };
-    var modeLevel = { wind: 'surface', clouds: 'clouds-total', rain: 'precip', waves: 'waves-height', turbulence: 'cat-fl340', satellite: 'sat-colour' };  // last level chosen per mode
+    var modeLevel = { wind: 'surface', clouds: 'clouds-total', rain: 'precip', waves: 'waves-height', turbulence: 'cat-fl340',
+                      satellite: 'sat-colour', temperature: 'temp', air: 'pressure', storms: 'cape', snow: 'snow' };  // last level chosen per mode
     function isFieldMode(m) { return !!FIELD_MODES[m]; }
 
     var fieldSource = {
@@ -351,10 +362,12 @@
 
     var tapPoint = null;          // {lat, lon} of the last tap, or null
     var windUnit = 'KmH';         // the three units are set by the app from the user's settings (see MapScreen.kt)
-    var precipUnit = 'Millimetres', lengthUnit = 'Metric';
+    var precipUnit = 'Millimetres', lengthUnit = 'Metric', tempUnit = 'Celsius';
     var BEAUFORT_KMH = [1, 5, 11, 19, 28, 38, 49, 61, 74, 88, 102, 117];
     var COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
     var LEVEL_NAMES = {
+      gusts: 'Wind gusts', temp: 'Air temperature (2 m)', feels: 'Feels-like temperature', freezing: 'Freezing level',
+      pressure: 'Sea-level pressure', humidity: 'Relative humidity', cape: 'Storm energy (CAPE)', snow: 'Snow depth',
       surface: 'Surface (10 m)', '850mb': '850 hPa (~1.5 km)', '250mb': '250 hPa (~10 km)',
       'waves-height': 'Wave height', 'waves-swell': 'Main swell height', 'waves-period': 'Wave period',
       'cat-fl300': 'Turbulence at FL300', 'cat-fl340': 'Turbulence at FL340', 'cat-fl390': 'Turbulence at FL390',
@@ -369,6 +382,20 @@
         return (inch < 0.01 ? '<0.01' : inch.toFixed(2)) + ' in' + per;
       }
       return (mm < 10 ? mm.toFixed(1) : Math.round(mm)) + ' mm' + per;
+    }
+
+    function formatTemp(celsius) {
+      return tempUnit === 'Fahrenheit' ? Math.round(celsius * 9 / 5 + 32) + '°F' : Math.round(celsius) + '°C';
+    }
+
+    function formatSnow(metres) {
+      if (precipUnit === 'Inches') return (metres / 0.0254).toFixed(metres < 0.25 ? 1 : 0) + ' in';
+      var cm = metres * 100;
+      return (cm < 10 ? cm.toFixed(1) : Math.round(cm)) + ' cm';
+    }
+
+    function formatHeight(metres) {
+      return lengthUnit === 'Imperial' ? Math.round(metres / 0.3048 / 100) * 100 + ' ft' : Math.round(metres / 10) * 10 + ' m';
     }
 
     function formatWaveHeight(metres) {
@@ -413,6 +440,19 @@
           $('readoutArrow').style.transform = 'rotate(' + heading + 'deg)';
           $('readoutDir').textContent = (isSea ? 'from ' + COMPASS[Math.round(cameFrom / 22.5) % 16] + ' · ' : 'Land · ') +
             LEVEL_NAMES[wind.level] + ' · ' + when;
+        } else if (wind.kind === 'scalar') {
+          var sv = wind.scalarValue([v.u, v.v, v.w]), lvl = wind.level, text, detail = LEVEL_NAMES[lvl];
+          if (lvl === 'temp' || lvl === 'feels') text = formatTemp(sv);
+          else if (lvl === 'pressure') text = Math.round(sv) + ' hPa';
+          else if (lvl === 'humidity') text = Math.round(sv) + '%';
+          else if (lvl === 'gusts') text = formatSpeed(sv);
+          else if (lvl === 'cape') {
+            text = Math.round(sv) + ' J/kg';
+            detail += ' · ' + (sv < 300 ? 'little' : sv < 1000 ? 'moderate' : sv < 2500 ? 'strong' : 'extreme');
+          } else if (lvl === 'snow') text = sv < 0.005 ? 'No snow' : formatSnow(sv);
+          else text = formatHeight(sv);  // freezing level
+          $('readoutSpeed').textContent = text;
+          $('readoutDir').textContent = detail + ' · ' + when;
         } else if (wind.kind === 'rainacc') {
           var total = v.u * v.u * wind.accMax();  // the texture stores sqrt(mm / max)
           $('readoutSpeed').textContent = total < 0.1 ? 'No rain' : formatRain(total, '');
@@ -443,9 +483,9 @@
       updateReadout();
     });
 
-    window.setUnits = function (wind_, precip, length) {
-      windUnit = wind_; precipUnit = precip; lengthUnit = length;
-      if (wind) wind.units = { wind: wind_, precip: precip, length: length };
+    window.setUnits = function (wind_, precip, length, temp) {
+      windUnit = wind_; precipUnit = precip; lengthUnit = length; tempUnit = temp || tempUnit;
+      if (wind) wind.units = { wind: wind_, precip: precip, length: length, temp: tempUnit };
       if (wind && wind.meta && isFieldMode(mode)) updateLegend();
       updateReadout();
     };
@@ -457,6 +497,10 @@
       { mode: 'wind', icon: '🌬️', title: 'Wind', items: FIELD_MODES.wind },
       { mode: 'clouds', icon: '☁️', title: 'Clouds', items: FIELD_MODES.clouds },
       { mode: 'rain', icon: '🌧️', title: 'Rain & snow', items: FIELD_MODES.rain },
+      { mode: 'temperature', icon: '🌡️', title: 'Temperature', items: FIELD_MODES.temperature },
+      { mode: 'air', icon: '🧭', title: 'Pressure & humidity', items: FIELD_MODES.air },
+      { mode: 'storms', icon: '⛈️', title: 'Thunderstorms', items: FIELD_MODES.storms },
+      { mode: 'snow', icon: '❄️', title: 'Snow', items: FIELD_MODES.snow },
       { mode: 'waves', icon: '🌊', title: 'Waves', items: FIELD_MODES.waves },
       { mode: 'turbulence', icon: '✈️', title: 'Turbulence', items: FIELD_MODES.turbulence },
       { mode: 'satellite', icon: '🛰️', title: 'Satellite',
@@ -464,20 +508,45 @@
       { mode: 'radar', icon: '📡', title: 'Radar', items: [['radar', 'Observed rain, past 2 hours']] }
     ];
 
-    function openMenu() { $('menu').hidden = false; }
+    /** Opens the menu with the group of the layer being shown expanded, so the active choice is in view. */
+    function openMenu() {
+      $('menu').hidden = false;
+      setGroupOpen(mode, true);
+    }
+
+    function applyGroupOpen(groupMode, open) {
+      document.querySelectorAll('#menu [data-group="' + groupMode + '"]').forEach(function (el) {
+        if (el.classList.contains('group')) {
+          el.classList.toggle('open', open);
+          el.lastChild.textContent = open ? '▴' : '▾';
+        } else {
+          el.hidden = !open;
+        }
+      });
+    }
+
+    /** Opens or closes a group. Only one group is open at a time, which keeps a long menu short. */
+    function setGroupOpen(groupMode, open) {
+      if (open) MENU.forEach(function (g) { if (g.mode !== groupMode) applyGroupOpen(g.mode, false); });
+      applyGroupOpen(groupMode, open);
+    }
     function closeMenu() { $('menu').hidden = true; }
 
     function buildMenu() {
       var sheet = $('menuSheet');
       sheet.innerHTML = '<h2>Layers</h2>';
       MENU.forEach(function (group) {
-        var title = document.createElement('div');
+        var title = document.createElement('button');
         title.className = 'group';
-        title.textContent = group.icon + '  ' + group.title;
+        title.dataset.group = group.mode;
+        title.innerHTML = '<span>' + group.icon + '&nbsp;&nbsp;' + group.title + '</span><span>▾</span>';
+        title.addEventListener('click', function () { setGroupOpen(group.mode, !title.classList.contains('open')); });
         sheet.appendChild(title);
         group.items.forEach(function (item) {
           var b = document.createElement('button');
           b.className = 'item';
+          b.dataset.group = group.mode;
+          b.hidden = true;  // groups start collapsed; the active one is opened below
           b.dataset.mode = group.mode;
           b.dataset.level = item[0];
           b.dataset.short = item[2] || item[1];  // shorter name for the top bar
@@ -486,6 +555,7 @@
           sheet.appendChild(b);
         });
       });
+      setGroupOpen(mode, true);
       $('menuBtn').addEventListener('click', openMenu);
       $('menuBackdrop').addEventListener('click', closeMenu);
     }
@@ -566,7 +636,7 @@
       host.id = 'overlay';
       map.getContainer().appendChild(host);
       wind = new WindLayer(map, host);
-      wind.units = { wind: windUnit, precip: precipUnit, length: lengthUnit };  // the app may have sent them before this existed
+      wind.units = { wind: windUnit, precip: precipUnit, length: lengthUnit, temp: tempUnit };  // the app may have sent them before this existed
       buildMenu();
       setMode('wind');
     });
