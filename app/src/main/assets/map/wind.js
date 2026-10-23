@@ -28,7 +28,8 @@
   var PIXELS_PER_MS = 0.03;     // particle speed: css pixels moved per frame per m/s of wind
   var MAX_AGE = 90;             // frames before a particle respawns
   var FADE = 0.88;              // trail persistence per frame (lower = shorter trails)
-  var WAVE_PX = 0.45;            // wave particle speed: css pixels per frame (before the height boost)
+  var WAVE_PX = 0.3;             // wave crest drift: css pixels per frame (before the height boost)
+  var CREST_LIFE = 130;          // frames a wave crest lives, fading in and out
   var CACHE_FRAMES = 16;
   // Speed (m/s) at which the colour scale tops out, per level.
   var COLOR_MAX = { surface: 25, '850mb': 40, '250mb': 80 };
@@ -70,10 +71,10 @@
   var RAIN_LUT = buildPrecipLut(RAIN_STOPS), SNOW_LUT = buildPrecipLut(SNOW_STOPS);
 
   var MAX_WAVE_M = 16, MAX_PERIOD_S = 30;
-  var WAVE_STOPS = [[0, 40, 60, 160], [1, 40, 140, 210], [2, 40, 190, 170], [3.5, 110, 210, 90], [5, 240, 220, 60],
-                    [7, 245, 140, 50], [10, 220, 60, 90], [14, 180, 60, 200]];
-  var PERIOD_STOPS = [[0, 60, 80, 200], [6, 40, 170, 210], [9, 70, 200, 120], [12, 240, 220, 60], [16, 245, 130, 50],
-                      [22, 210, 50, 150], [30, 180, 60, 200]];
+  var WAVE_STOPS = [[0, 25, 40, 120], [1, 45, 90, 200], [2, 60, 150, 230], [3.5, 100, 185, 235], [5, 160, 210, 245],
+                    [7, 230, 190, 235], [10, 235, 120, 190], [14, 190, 60, 170]];
+  var PERIOD_STOPS = [[0, 40, 40, 110], [6, 90, 60, 190], [9, 170, 80, 200], [12, 240, 110, 170], [16, 250, 170, 110],
+                      [22, 255, 230, 150], [30, 255, 250, 230]];
 
   /** A 256-entry colour table over 0..max; alphaOf(value) gives the opacity (0..255) for each entry. */
   function buildValueLut(stops, max, alphaOf) {
@@ -88,7 +89,7 @@
     return lut;
   }
   // Land is stored as height 0, so it stays clear; open sea gets a gentle tint that firms up with bigger seas.
-  var WAVE_LUT = buildValueLut(WAVE_STOPS, MAX_WAVE_M, function (h) { return h < 0.05 ? 0 : 55 + 100 * Math.min(1, h / 6); });
+  var WAVE_LUT = buildValueLut(WAVE_STOPS, MAX_WAVE_M, function (h) { return h < 0.05 ? 0 : 50 + 85 * Math.min(1, h / 6); });
   var PERIOD_LUT = buildValueLut(PERIOD_STOPS, MAX_PERIOD_S, function (t) { return t < 0.5 ? 0 : 130; });
 
   function WindLayer(map, host) {
@@ -422,7 +423,7 @@
     // Spawn at a random screen position so particle density stays even however the map is zoomed or panned.
     var p = this.map.unproject([Math.random() * this.w, Math.random() * this.h]);
     this.lon[i] = p.lng; this.lat[i] = p.lat;
-    this.age[i] = Math.floor(Math.random() * MAX_AGE);
+    this.age[i] = Math.floor(Math.random() * (this.kind === 'wave' ? CREST_LIFE : MAX_AGE));
     var s = this.map.project([p.lng, p.lat]);
     this.px[i] = s.x; this.py[i] = s.y;
   };
@@ -438,6 +439,8 @@
     var map = this.map, f = this.frame;
     var kind = this.kind;
     if (!f || (kind !== 'wind' && kind !== 'wave') || map.isMoving() || document.hidden) return;
+
+    if (kind === 'wave') { this.tickWaves(f); return; }
 
     var ctx = this.pctx, out = this.sampleOut, w = this.w, h = this.h;
     ctx.globalCompositeOperation = 'destination-in';
@@ -470,6 +473,41 @@
       this.px[i] = s.x; this.py[i] = s.y;
     }
     ctx.stroke();
+  };
+
+  /**
+   * Waves are drawn as short curved crest lines, perpendicular to the direction of travel, that fade in, drift
+   * slowly with the waves and fade out. That keeps them visually distinct from the wind's flowing streaks.
+   */
+  WindLayer.prototype.tickWaves = function (f) {
+    var map = this.map, ctx = this.pctx, out = this.sampleOut, w = this.w, h = this.h;
+    ctx.clearRect(0, 0, w, h);
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 1.3;
+    var degPerPx = 360 / (512 * Math.pow(2, map.getZoom()));
+    var n = Math.round(this.count * 0.32);  // crests are larger than particles, so fewer of them
+    for (var i = 0; i < n; i++) {
+      var age = ++this.age[i];
+      if (age > CREST_LIFE || !this.sampleWind(f, this.lon[i], this.lat[i], out)) { this.respawn(i); continue; }
+      var mag = Math.sqrt(out[1] * out[1] + out[2] * out[2]);
+      if (mag < 0.3 || out[0] < 0.05) { this.respawn(i); continue; }  // land or the coast edge
+      var east = out[1] / mag, north = out[2] / mag;
+      var pace = WAVE_PX * (0.6 + Math.min(1, out[0] / 5));            // bigger seas drift a little faster
+      this.lon[i] += east * pace * degPerPx;
+      this.lat[i] += north * pace * degPerPx * Math.cos(this.lat[i] * Math.PI / 180);
+      var s = map.project([this.lon[i], this.lat[i]]);
+      if (s.x < -30 || s.x > w + 30 || s.y < -30 || s.y > h + 30) { this.respawn(i); continue; }
+
+      var sx = east, sy = -north;               // travel direction on screen (y points down)
+      var qx = -sy, qy = sx;                    // the crest runs across it
+      var half = 6 + Math.min(6, out[0] * 1.5);  // longer crests for bigger seas
+      var envelope = Math.sin(Math.PI * age / CREST_LIFE);
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.55 * envelope).toFixed(2) + ')';
+      ctx.beginPath();
+      ctx.moveTo(s.x - qx * half, s.y - qy * half);
+      ctx.quadraticCurveTo(s.x + sx * half * 0.9, s.y + sy * half * 0.9, s.x + qx * half, s.y + qy * half);
+      ctx.stroke();
+    }
   };
 
   window.WindLayer = WindLayer;
