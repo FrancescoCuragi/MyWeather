@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">MyWeather</string>
     <string name="widget_description">Current weather, next hours and next days</string>
+    <string name="widget_small_description">Temperature and conditions at a glance</string>
 </resources>

@@ -5,11 +5,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.DpSize
 import androidx.glance.GlanceId
+import androidx.glance.LocalSize
 import androidx.glance.GlanceModifier
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -57,8 +60,18 @@ private const val FETCH_TIMEOUT_MS = 8_000L
 private const val HOURS_SHOWN = 6
 private const val DAYS_SHOWN = 4
 
-/** The big home-screen widget: current conditions, the next hours and the next days for the primary place. */
-class WeatherWidget : GlanceAppWidget() {
+// The size classes the widget adapts between. Glance picks the closest one that fits the space the launcher gives it.
+private val SMALL = DpSize(110.dp, 110.dp)    // a 2x2 tile: temperature and conditions
+private val MEDIUM = DpSize(250.dp, 110.dp)   // a wide strip: adds the next hours
+private val LARGE = DpSize(250.dp, 220.dp)    // the full widget: adds the next days
+
+/**
+ * The home-screen widget for the primary place. One widget that adapts to its size, so it can be dragged out
+ * to a small tile, a wide strip or the full big layout; "MyWeather (small)" in the widget picker starts at the tile.
+ */
+open class WeatherWidget : GlanceAppWidget() {
+
+    override val sizeMode = SizeMode.Responsive(setOf(SMALL, MEDIUM, LARGE))
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val settingsRepository = SettingsRepository(context)
@@ -78,7 +91,7 @@ class WeatherWidget : GlanceAppWidget() {
                 if (place == null || data == null) {
                     EmptyState(hasPlace = place != null)
                 } else {
-                    WidgetContent(place, data, settings)
+                    WidgetContent(place, data, settings, LocalSize.current)
                 }
             }
         }
@@ -103,11 +116,17 @@ private fun EmptyState(hasPlace: Boolean) {
 }
 
 @Composable
-private fun WidgetContent(place: Place, data: CachedForecast, settings: UserSettings) {
+private fun WidgetContent(place: Place, data: CachedForecast, settings: UserSettings, size: DpSize) {
     val forecast = data.forecast
     val current = forecast.current
     val daily = forecast.daily
     val updated = settings.clock(Instant.ofEpochMilli(data.fetchedAt).atZone(ZoneId.systemDefault()).toLocalDateTime())
+
+    // The tile has no room for the details, so it is a separate, simpler layout.
+    if (size.width < MEDIUM.width) {
+        TileContent(place, data, settings)
+        return
+    }
 
     Column(GlanceModifier.fillMaxSize()) {
         Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -150,8 +169,37 @@ private fun WidgetContent(place: Place, data: CachedForecast, settings: UserSett
 
         Spacer(GlanceModifier.height(6.dp))
         HourlyRow(data, settings)
-        Spacer(GlanceModifier.height(8.dp))
-        DailyRow(data, settings)
+        // The days only fit once the widget is tall enough.
+        if (size.height >= LARGE.height) {
+            Spacer(GlanceModifier.height(8.dp))
+            DailyRow(data, settings)
+        }
+    }
+}
+
+@Composable
+private fun TileContent(place: Place, data: CachedForecast, settings: UserSettings) {
+    val current = data.forecast.current
+    val daily = data.forecast.daily
+    Column(GlanceModifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            place.name,
+            style = TextStyle(color = ColorProvider(TextSecondary), fontSize = 12.sp),
+            maxLines = 1,
+        )
+        Text(
+            weatherIcon(current.weatherCode, current.isDay == 1),
+            style = TextStyle(fontSize = 30.sp),
+        )
+        Text(
+            settings.temperature(current.temperature),
+            style = TextStyle(color = ColorProvider(TextPrimary), fontSize = 34.sp, fontWeight = FontWeight.Medium),
+        )
+        Text(
+            "H ${settings.temperature(daily.temperatureMax[0])}  L ${settings.temperature(daily.temperatureMin[0])}",
+            style = TextStyle(color = ColorProvider(TextSecondary), fontSize = 12.sp),
+            maxLines = 1,
+        )
     }
 }
 
